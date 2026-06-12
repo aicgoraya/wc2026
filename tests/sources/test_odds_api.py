@@ -74,6 +74,7 @@ class TestParse:
         assert row["home"] == 1.75 and row["draw"] == 3.6 and row["away"] == 5.2
         assert row["bookmaker"] == "pinnacle"
         assert row["commence_time"] == pd.Timestamp("2026-06-13T16:00:00Z")
+        assert row["fetched_at_utc"] == pd.Timestamp("2026-06-12T00:00:00Z")
 
     def test_unexpected_outcomes_raise(self, source: OddsApiSource) -> None:
         bad = event()

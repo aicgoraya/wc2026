@@ -30,6 +30,7 @@ QUOTE_COLUMNS: tuple[str, ...] = (
     "home_name",
     "away_name",
     "bookmaker",
+    "fetched_at_utc",
     "market_last_update",
     "home",
     "draw",
@@ -115,6 +116,7 @@ class OddsApiSource:
                         "home_name": home_name,
                         "away_name": away_name,
                         "bookmaker": bookmaker["key"],
+                        "fetched_at_utc": raw.fetched_at_utc,
                         "market_last_update": h2h.get("last_update"),
                         "home": prices[home_name],
                         "draw": prices["Draw"],
@@ -124,4 +126,5 @@ class OddsApiSource:
         frame = pd.DataFrame(rows, columns=list(QUOTE_COLUMNS))
         for col in ("commence_time", "market_last_update"):
             frame[col] = pd.to_datetime(frame[col], utc=True, format="ISO8601")
+        frame["fetched_at_utc"] = pd.to_datetime(frame["fetched_at_utc"], utc=True)
         return frame.sort_values(["commence_time", "event_id", "bookmaker"], ignore_index=True)

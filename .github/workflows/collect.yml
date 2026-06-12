@@ -1,0 +1,61 @@
+# Cloud snapshot collection, every 6 hours.
+#
+# Snapshots are committed to the dedicated `data` branch (NOT main) via a
+# nested checkout at ./data — main's gitignore hides it from the code repo.
+# A data branch was chosen over workflow artifacts because artifacts expire
+# (90 days max), can't be aggregated across runs, and the eval pipeline needs
+# the full odds time series locally (`git fetch origin data`). Snapshots are
+# small parquet files; total volume over the tournament is a few tens of MB.
+#
+# The last stored snapshot before each kickoff is the project's CLOSING-LINE
+# PROXY for the market benchmark (see eval/market.py) — a missed run is lost
+# benchmark precision, so failures should be investigated, not ignored.
+name: collect
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: data
+          path: data
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync
+      - name: Snapshot fixtures
+        env:
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+        run: uv run wc2026 snapshot-fixtures
+      - name: Snapshot odds
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: uv run wc2026 snapshot-odds
+      - name: Push snapshots to the data branch
+        run: |
+          cd data
+          git config user.name "wc2026-collector"
+          git config user.email "wc2026-collector@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no new snapshots"
+            exit 0
+          fi
+          git commit -m "snapshots $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin data
