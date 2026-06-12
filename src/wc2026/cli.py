@@ -13,7 +13,31 @@ def _not_yet(phase: str) -> None:
 @app.command()
 def snapshot_odds() -> None:
     """Pull current 1X2 odds for all WC fixtures and store a snapshot."""
-    _not_yet("Phase 1a")
+    from wc2026.config import get_settings
+    from wc2026.pipeline.collect import MissingCredentialError, collect_odds
+
+    try:
+        snap_id, meta = collect_odds(get_settings())
+    except MissingCredentialError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    remaining = meta.get("x-requests-remaining", "?")
+    typer.echo(f"odds snapshot {snap_id} written (quota remaining: {remaining})")
+
+
+@app.command()
+def snapshot_fixtures() -> None:
+    """Pull WC fixtures + live results from football-data.org and store a snapshot."""
+    from wc2026.config import get_settings
+    from wc2026.pipeline.collect import MissingCredentialError, collect_fixtures
+
+    try:
+        snap_id, meta = collect_fixtures(get_settings())
+    except MissingCredentialError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    remaining = meta.get("X-RequestsAvailable", "?")
+    typer.echo(f"fixtures snapshot {snap_id} written (calls remaining: {remaining})")
 
 
 @app.command()

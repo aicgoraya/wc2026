@@ -46,9 +46,13 @@ class Match(BaseModel):
     """One match — historical result, live result, or future fixture.
 
     ``home_id`` is the first-listed team; on neutral ground (``neutral=True``,
-    the norm at a World Cup) it carries no venue advantage. Scores from the
-    historical dataset may include extra time; shootout outcomes are separate
-    fields so a shootout match still reads as a draw in regulation terms.
+    the norm at a World Cup) it carries no venue advantage.
+
+    ``home_goals``/``away_goals`` are the 90-minute score when the source can
+    decompose it (football-data.org provides ``regularTime``); the historical
+    dataset folds extra time into the score, in which case the ``et_*`` fields
+    stay ``None``. Shootout goals are never included — a shootout match reads
+    as a draw, with the winner in ``shootout_winner_id``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -59,6 +63,8 @@ class Match(BaseModel):
     away_id: str = Field(min_length=1)
     home_goals: int | None = Field(default=None, ge=0)
     away_goals: int | None = Field(default=None, ge=0)
+    et_home_goals: int | None = Field(default=None, ge=0)
+    et_away_goals: int | None = Field(default=None, ge=0)
     neutral: bool
     tournament: str = Field(min_length=1)
     stage: Stage | None = None
@@ -77,10 +83,19 @@ class Match(BaseModel):
             raise ValueError("a finished match must have a score")
         if self.status is MatchStatus.SCHEDULED and self.home_goals is not None:
             raise ValueError("a scheduled match cannot have a score")
+        if (self.et_home_goals is None) != (self.et_away_goals is None):
+            raise ValueError("extra-time goals must be both set or both unset")
+        if self.et_home_goals is not None and self.home_goals is None:
+            raise ValueError("extra-time goals require a regulation score")
         if self.went_to_shootout != (self.shootout_winner_id is not None):
             raise ValueError("shootout flag and winner must be set together")
         if self.shootout_winner_id not in (None, self.home_id, self.away_id):
             raise ValueError("shootout winner must be one of the two teams")
+        if self.went_to_shootout and self.home_goals is not None and self.away_goals is not None:
+            home_total = self.home_goals + (self.et_home_goals or 0)
+            away_total = self.away_goals + (self.et_away_goals or 0)
+            if home_total != away_total:
+                raise ValueError("a shootout implies a level score after regulation/extra time")
         return self
 
 
@@ -111,6 +126,8 @@ MATCH_COLUMNS: tuple[str, ...] = (
     "away_id",
     "home_goals",
     "away_goals",
+    "et_home_goals",
+    "et_away_goals",
     "neutral",
     "tournament",
     "stage",
@@ -126,8 +143,8 @@ def matches_to_frame(matches: Iterable[Match]) -> pd.DataFrame:
     rows = [m.model_dump() for m in matches]
     frame = pd.DataFrame(rows, columns=list(MATCH_COLUMNS))
     frame["date"] = pd.to_datetime(frame["date"])
-    frame["home_goals"] = frame["home_goals"].astype("Int64")
-    frame["away_goals"] = frame["away_goals"].astype("Int64")
+    for col in ("home_goals", "away_goals", "et_home_goals", "et_away_goals"):
+        frame[col] = frame[col].astype("Int64")
     for col in ("stage", "status"):
         frame[col] = frame[col].map(lambda v: None if v is None else str(v))
     return frame.sort_values(["date", "match_id"], ignore_index=True)
