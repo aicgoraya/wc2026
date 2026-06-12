@@ -61,7 +61,7 @@ class TestParse:
         assert row["stage"] == "group"
         assert row["group"] == "A"
         assert row["status"] == "finished"
-        assert bool(row["neutral"]) is True
+        assert bool(row["neutral"]) is False  # Mexico is a 2026 host: true home game
 
     def test_scheduled_timed(self, source: FootballDataSource) -> None:
         node = _match_node(
@@ -131,4 +131,36 @@ class TestParse:
     def test_unknown_status_raises(self, source: FootballDataSource) -> None:
         node = _match_node(status="SOMETHING_NEW")
         with pytest.raises(KeyError):
+            source.parse(payload(node))
+
+    def test_non_host_match_is_neutral(self, source: FootballDataSource) -> None:
+        node = _match_node(
+            homeTeam={"id": 1, "name": "South Korea"}, awayTeam={"id": 2, "name": "Czechia"}
+        )
+        row = source.parse(payload(node)).iloc[0]
+        assert bool(row["neutral"]) is True
+        assert row["away_id"] == "czech_republic"  # override applied
+
+    def test_host_listed_away_swaps_sides(self, source: FootballDataSource) -> None:
+        node = _match_node(
+            homeTeam={"id": 1, "name": "Paraguay"},
+            awayTeam={"id": 2, "name": "United States"},
+            score={
+                "winner": "AWAY_TEAM",
+                "duration": "REGULAR",
+                "fullTime": {"home": 1, "away": 3},
+                "halfTime": {"home": 0, "away": 1},
+            },
+        )
+        row = source.parse(payload(node)).iloc[0]
+        assert row["home_id"] == "united_states"  # host carries the home advantage
+        assert row["away_id"] == "paraguay"
+        assert row["home_goals"] == 3 and row["away_goals"] == 1  # goals swapped too
+        assert bool(row["neutral"]) is False
+
+    def test_unresolvable_name_raises(self, source: FootballDataSource) -> None:
+        from wc2026.data.names import UnresolvedTeamNameError
+
+        node = _match_node(homeTeam={"id": 1, "name": "Atlantis"})
+        with pytest.raises(UnresolvedTeamNameError, match="Atlantis"):
             source.parse(payload(node))

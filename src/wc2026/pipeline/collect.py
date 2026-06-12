@@ -8,10 +8,12 @@ re-hitting the APIs — essential for odds, which cannot be re-fetched.
 from pathlib import Path
 
 from wc2026.config import Settings
+from wc2026.data.merge import merge_canonical
+from wc2026.data.sources import martj42
 from wc2026.data.sources.base import RawPayload
 from wc2026.data.sources.football_data import FootballDataSource
 from wc2026.data.sources.odds_api import OddsApiSource, discover_sport_key
-from wc2026.data.store import SnapshotId, Store
+from wc2026.data.store import MATCHES_DATASET, SnapshotId, Store
 
 ODDS_DATASET = "odds"
 WC_FIXTURES_DATASET = "wc_fixtures"
@@ -58,6 +60,32 @@ def collect_odds(settings: Settings) -> tuple[SnapshotId, dict[str, str]]:
         },
     )
     return snap_id, dict(raw.meta)
+
+
+def collect_history(settings: Settings) -> tuple[SnapshotId, dict[str, int]]:
+    """Build THE canonical matches dataset: martj42 history + live WC feed.
+
+    Requires a prior ``wc_fixtures`` snapshot (run ``snapshot-fixtures`` first)
+    — the WC2026 window is owned by the live feed, so merging without it would
+    silently drop the tournament being forecast.
+    """
+    results_raw = martj42.fetch_results()
+    shootouts_raw = martj42.fetch_shootouts()
+    raw_root = settings.data_root / "raw"
+    _archive_raw(results_raw, raw_root)
+    _archive_raw(shootouts_raw, raw_root)
+    history = martj42.parse(results_raw, shootouts_raw)
+    store = Store(settings.data_root / "snapshots")
+    wc_fixtures = store.read(WC_FIXTURES_DATASET, "matches")
+    merged = merge_canonical(history, wc_fixtures)
+    teams = martj42.team_universe(history)
+    counts = {"history": len(history), "wc_feed": len(wc_fixtures), "merged": len(merged)}
+    snap_id = store.write_snapshot(
+        MATCHES_DATASET,
+        {"matches": merged, "teams": teams},
+        meta={"source": "martj42+football_data", **counts},
+    )
+    return snap_id, counts
 
 
 def collect_fixtures(settings: Settings) -> tuple[SnapshotId, dict[str, str]]:

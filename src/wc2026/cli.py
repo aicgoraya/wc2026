@@ -41,6 +41,19 @@ def snapshot_fixtures() -> None:
 
 
 @app.command()
+def ingest_history() -> None:
+    """Build the canonical matches dataset: full history merged with the live WC feed."""
+    from wc2026.config import get_settings
+    from wc2026.pipeline.collect import collect_history
+
+    snap_id, counts = collect_history(get_settings())
+    typer.echo(
+        f"matches snapshot {snap_id} written "
+        f"(history {counts['history']} + wc_feed {counts['wc_feed']} -> {counts['merged']})"
+    )
+
+
+@app.command()
 def refresh() -> None:
     """Pull new results and odds, refit models, re-simulate, regenerate RESULTS.md."""
     _not_yet("Phase 1")

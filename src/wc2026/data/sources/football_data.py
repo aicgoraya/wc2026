@@ -17,11 +17,15 @@ from typing import Any
 
 import pandas as pd
 
-from wc2026.data.names import canonical_slug
+from wc2026.data.names import NameResolver, default_resolver
 from wc2026.data.schema import Match, MatchStatus, Stage, matches_to_frame
 from wc2026.data.sources.base import RawPayload, http_get
 
 BASE_URL = "https://api.football-data.org/v4"
+
+HOSTS_2026 = frozenset({"united_states", "mexico", "canada"})
+"""Host nations: their matches are TRUE home games (martj42 convention:
+host listed as home, neutral=False), not neutral-venue matches."""
 
 _STATUS_MAP = {
     # docs lookup_tables.html: Match.status enum
@@ -54,8 +58,9 @@ class FootballDataSource:
 
     name = "football_data"
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, resolver: NameResolver | None = None) -> None:
         self._token = token
+        self._resolver = resolver or default_resolver()
 
     def fetch(self) -> RawPayload:
         """GET all WC matches (fixtures + results); one call covers the tournament."""
@@ -83,29 +88,42 @@ class FootballDataSource:
         away_name = (node["awayTeam"] or {}).get("name")
         if not home_name or not away_name:
             return None  # undecided knockout placeholder
+        home_id = self._resolver.resolve(self.name, home_name)
+        away_id = self._resolver.resolve(self.name, away_name)
         status = _STATUS_MAP[node["status"]]
         goals = self._decompose_score(node["score"], status)
+        shootout_winner_id = {
+            None: None,
+            "HOME_TEAM": home_id,
+            "AWAY_TEAM": away_id,
+        }[goals["shootout_winner"]]
+
+        # martj42 convention: a host's matches are real home games. If the feed
+        # lists the host second, swap sides so home_id is the side with the
+        # home advantage. (Host-vs-host knockouts keep the listed order.)
+        neutral = home_id not in HOSTS_2026 and away_id not in HOSTS_2026
+        if away_id in HOSTS_2026 and home_id not in HOSTS_2026:
+            home_id, away_id = away_id, home_id
+            goals["home"], goals["away"] = goals["away"], goals["home"]
+            goals["et_home"], goals["et_away"] = goals["et_away"], goals["et_home"]
+
         group_raw: str | None = node.get("group")
         return Match(
             match_id=f"fd_{node['id']}",
             date=dt.datetime.fromisoformat(node["utcDate"]).date(),
-            home_id=canonical_slug(home_name),
-            away_id=canonical_slug(away_name),
+            home_id=home_id,
+            away_id=away_id,
             home_goals=goals["home"],
             away_goals=goals["away"],
             et_home_goals=goals["et_home"],
             et_away_goals=goals["et_away"],
-            neutral=True,  # 2026 host advantage is modeled as a feature, not via this flag
+            neutral=neutral,
             tournament="fifa_world_cup",
             stage=_STAGE_MAP[node["stage"]],
             group=group_raw.removeprefix("GROUP_") if group_raw else None,
             status=status,
             went_to_shootout=goals["shootout_winner"] is not None,
-            shootout_winner_id={
-                None: None,
-                "HOME_TEAM": canonical_slug(home_name),
-                "AWAY_TEAM": canonical_slug(away_name),
-            }[goals["shootout_winner"]],
+            shootout_winner_id=shootout_winner_id,
         )
 
     @staticmethod
