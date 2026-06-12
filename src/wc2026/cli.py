@@ -36,8 +36,8 @@ def snapshot_fixtures() -> None:
     except MissingCredentialError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
-    remaining = meta.get("X-RequestsAvailable", "?")
-    typer.echo(f"fixtures snapshot {snap_id} written (calls remaining: {remaining})")
+    remaining = meta.get("X-Requests-Available-Minute", "?")
+    typer.echo(f"fixtures snapshot {snap_id} written (calls remaining this minute: {remaining})")
 
 
 @app.command()

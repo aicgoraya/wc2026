@@ -63,7 +63,8 @@ class FootballDataSource:
             self.name,
             f"{BASE_URL}/competitions/WC/matches",
             headers={"X-Auth-Token": self._token},
-            keep_headers=("X-RequestsAvailable", "X-RequestCounter-Reset", "X-API-Version"),
+            # header names observed live 2026-06-12 (docs table shows older names)
+            keep_headers=("X-Requests-Available-Minute", "X-RequestCounter-Reset", "X-API-Version"),
         )
 
     def parse(self, raw: RawPayload) -> pd.DataFrame:

@@ -97,6 +97,19 @@ SPORTS = [
         "title": "FIFA World Cup Winner",
         "active": True,
     },
+    {
+        # seen live 2026-06-12: must NOT match (different tournament)
+        "key": "soccer_fifa_club_world_cup",
+        "group": "Soccer",
+        "title": "FIFA Club World Cup",
+        "active": True,
+    },
+    {
+        "key": "soccer_fifa_world_cup_womens",
+        "group": "Soccer",
+        "title": "FIFA Women's World Cup",
+        "active": True,
+    },
 ]
 
 
@@ -114,12 +127,12 @@ class TestDiscoverSportKey:
             discover_sport_key("k")
 
     def test_ambiguous_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        extra = {
-            "key": "soccer_fifa_world_cup_other",
+        duplicate = {
+            "key": "soccer_fifa_world_cup_2",
             "group": "Soccer",
-            "title": "FIFA World Cup Special",
+            "title": "FIFA World Cup",
             "active": True,
         }
-        self._patch(monkeypatch, [*SPORTS, extra])
+        self._patch(monkeypatch, [*SPORTS, duplicate])
         with pytest.raises(SourceUnavailableError, match="expected exactly one"):
             discover_sport_key("k")

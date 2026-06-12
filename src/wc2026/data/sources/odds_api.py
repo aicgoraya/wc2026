@@ -49,14 +49,12 @@ def discover_sport_key(api_key: str) -> str:
         params={"apiKey": api_key, "all": "true"},
     )
     sports: list[dict[str, Any]] = json.loads(raw.content)
+    # exact title: "FIFA World Cup Winner" is outrights, "FIFA Club World Cup",
+    # "... Womens" and "... Qualifiers ..." are different tournaments
     candidates = [
         str(s["key"])
         for s in sports
-        if s.get("group") == "Soccer"
-        and "world cup" in s.get("title", "").lower()
-        and "winner" not in s.get("title", "").lower()  # outrights market, not match odds
-        and "qualifier" not in s.get("title", "").lower()
-        and "women" not in s.get("title", "").lower()
+        if s.get("group") == "Soccer" and s.get("title", "").lower() == "fifa world cup"
     ]
     if len(candidates) != 1:
         soccer = sorted(s["key"] for s in sports if s.get("group") == "Soccer")
