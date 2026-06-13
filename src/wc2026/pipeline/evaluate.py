@@ -15,6 +15,7 @@ import pandas as pd
 from wc2026.data.sources.elo_own import CONTINENTAL_FINALS
 from wc2026.data.store import MATCHES_DATASET, Store
 from wc2026.eval import calibration, scoring
+from wc2026.eval.compare import compare
 from wc2026.eval.join import join_events_to_fixtures, load_all_quotes, unique_events
 from wc2026.eval.market import BenchmarkPolicy, benchmark_probs, closing_quotes
 from wc2026.eval.report import render_results_md, scoreboard_row
@@ -99,6 +100,7 @@ def run_report(
     tournament_rows = []
     live_rows = []
     plot_paths: dict[str, str] = {}
+    primary_frames: dict[str, pd.DataFrame] = {}
     n_live = 0
     for model in model_lineup():
         primary = walk_forward(
@@ -107,6 +109,7 @@ def run_report(
             (PRIMARY_START, primary_end),
             RefitSchedule(every_days=30),
         )
+        primary_frames[model.name] = primary
         primary_rows.append(scoreboard_row(model.name, primary, seed=seed))
         in_slice = primary["tournament"].isin(TOURNAMENT_SLICE)
         tournament_rows.append(scoreboard_row(model.name, primary[in_slice], seed=seed))
@@ -141,6 +144,41 @@ def run_report(
     if len(market_rows):
         live_rows.append(scoreboard_row("market (matches w/ lines)", market_rows, seed=seed))
 
+    # Paired comparison: every challenger vs the baseline (lineup[0]) on the
+    # SHARED matches, per-match RPS difference. This is the correct test —
+    # marginal CIs overlap even when one model is reliably better match-for-match.
+    lineup = model_lineup()
+    baseline = lineup[0].name
+    paired_rows = []
+    base_frame = primary_frames[baseline].set_index("match_id")
+    for model in lineup[1:]:
+        challenger = primary_frames[model.name].set_index("match_id")
+        shared = base_frame.index.intersection(challenger.index)
+        cmp = compare(
+            model.name,
+            challenger.loc[shared, "rps"].to_numpy(dtype=np.float64),
+            baseline,
+            base_frame.loc[shared, "rps"].to_numpy(dtype=np.float64),
+            metric="rps",
+            seed=seed,
+        )
+        paired_rows.append(
+            {
+                "comparison": f"{cmp.model_a} − {cmp.model_b}",
+                "n": cmp.n,
+                "mean_dRPS": cmp.mean_delta,
+                "ci_lo": cmp.ci_lo,
+                "ci_hi": cmp.ci_hi,
+                "DM": cmp.dm_stat,
+                "p": cmp.dm_pvalue,
+                "verdict": (
+                    f"{cmp.winner} better (p={cmp.dm_pvalue:.1e})"
+                    if cmp.winner
+                    else "no significant difference"
+                ),
+            }
+        )
+
     live_notes = [
         f"Live model rows cover all {n_live} completed WC matches; market rows exist"
         " only where a pre-kickoff quote was stored (collection began 2026-06-12):"
@@ -163,6 +201,7 @@ def run_report(
         primary_rows=primary_rows,
         primary_window=(PRIMARY_START, primary_end),
         tournament_rows=tournament_rows,
+        paired_rows=paired_rows,
         live_rows=live_rows,
         live_notes=live_notes,
         plot_paths=plot_paths,

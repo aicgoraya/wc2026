@@ -58,10 +58,12 @@ def render_results_md(
     live_rows: Sequence[Mapping[str, object]],
     live_notes: Sequence[str],
     plot_paths: Mapping[str, str],
+    paired_rows: Sequence[Mapping[str, object]] = (),
     methodology_notes: Sequence[str] = (),
 ) -> str:
     """Assemble RESULTS.md from precomputed scoreboard rows."""
     cols = ["model", "n", "rps", "rps_ci_lo", "rps_ci_hi", "log_loss", "brier", "ece"]
+    paired_cols = ["comparison", "n", "mean_dRPS", "ci_lo", "ci_hi", "DM", "p", "verdict"]
     start, end = primary_window
     parts = [
         "# RESULTS — live scoreboard",
@@ -79,6 +81,15 @@ def render_results_md(
         md_table(primary_rows, cols),
         "",
         *(f"- {note}" for note in methodology_notes),
+        "",
+        "### Paired significance (per-match ΔRPS on shared matches)",
+        "",
+        "The marginal CIs above share the same matches, so they overlap even when one",
+        "model is reliably better game-by-game. The honest test is the paired per-match",
+        "RPS difference: `mean_dRPS = challenger − baseline` (negative ⇒ challenger",
+        "better), with a 95% bootstrap CI over matches and a Diebold–Mariano statistic.",
+        "",
+        md_table(paired_rows, paired_cols) if paired_rows else "_Only one model on the board._",
         "",
         "### Tournament-only slice (World Cup + continental finals)",
         "",

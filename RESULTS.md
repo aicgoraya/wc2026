@@ -1,6 +1,6 @@
 # RESULTS — live scoreboard
 
-_Generated 2026-06-13 02:06 UTC. Lower is better on every metric; RPS is primary. `ece` = expected calibration error. CIs are 95% bootstrap._
+_Generated 2026-06-13 02:16 UTC. Lower is better on every metric; RPS is primary. `ece` = expected calibration error. CIs are 95% bootstrap._
 
 ## Track A — PRIMARY: historical walk-forward (real sample size)
 
@@ -15,6 +15,17 @@ only benchmarked on the live track below.
 | dixon_coles | 15816 | 0.1711 | 0.1687 | 0.1735 | 0.8742 | 0.5130 | 0.0072 |
 
 - dixon_coles: decay half-life (1460d) and L2 shrinkage (0.25) selected JOINTLY by walk-forward RPS on an inner 2004-2009 validation window (training always pre-cutoff), frozen and committed before the 2010+ test window was evaluated — full table in results/dc_tuning.md; rho and the neutral listed-home coefficient fitted by MLE. Reproduce with `wc2026 tune-dc`.
+
+### Paired significance (per-match ΔRPS on shared matches)
+
+The marginal CIs above share the same matches, so they overlap even when one
+model is reliably better game-by-game. The honest test is the paired per-match
+RPS difference: `mean_dRPS = challenger − baseline` (negative ⇒ challenger
+better), with a 95% bootstrap CI over matches and a Diebold–Mariano statistic.
+
+| comparison | n | mean_dRPS | ci_lo | ci_hi | DM | p | verdict |
+|---|---|---|---|---|---|---|---|
+| dixon_coles − elo_baseline | 15816 | -0.0038 | -0.0049 | -0.0028 | -6.8474 | 0.0000 | dixon_coles better (p=7.5e-12) |
 
 ### Tournament-only slice (World Cup + continental finals)
 
