@@ -42,8 +42,11 @@ from wc2026.models.base import Fixture, OutcomeProbs, ScorelineDist
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
 
-DEFAULT_HALF_LIFE_DAYS = 1460.0
-"""Frozen by the inner-window selection (pipeline.tune); see RESULTS.md."""
+DEFAULT_HALF_LIFE_DAYS = 2920.0
+"""Frozen by the inner-window selection (pipeline.tune, run 2026-06-13):
+walk-forward RPS on 2004-2009 was 0.1755 / 0.1766 / 0.1807 / 0.1892 for
+half-lives 2920 / 1460 / 730 / 365 days. Selected before the 2010+ test
+window was ever evaluated; see RESULTS.md."""
 
 RHO_BOUND = 0.2
 _LOG_LAMBDA_CLIP = (-10.0, 6.0)  # keeps exp() finite during line searches

@@ -19,12 +19,19 @@ from wc2026.eval.join import join_events_to_fixtures, load_all_quotes, unique_ev
 from wc2026.eval.market import BenchmarkPolicy, benchmark_probs, closing_quotes
 from wc2026.eval.report import render_results_md, scoreboard_row
 from wc2026.eval.walkforward import RefitSchedule, walk_forward
+from wc2026.models.base import Forecaster
+from wc2026.models.dixon_coles import DEFAULT_HALF_LIFE_DAYS, DixonColesForecaster
 from wc2026.models.elo import EloForecaster
 from wc2026.pipeline.collect import WC_FIXTURES_DATASET
 
 PRIMARY_START = dt.date(2010, 1, 1)
 WC2026_START = dt.date(2026, 6, 11)
 TOURNAMENT_SLICE = frozenset({"fifa_world_cup"}) | CONTINENTAL_FINALS
+
+
+def model_lineup() -> list[Forecaster]:
+    """The models on the scoreboard, in ladder order."""
+    return [EloForecaster(), DixonColesForecaster()]
 
 
 def market_live_rows(store: Store, completed: pd.DataFrame) -> pd.DataFrame:
@@ -78,49 +85,73 @@ def run_report(
     matches = store.read(MATCHES_DATASET, "matches")
 
     primary_end = WC2026_START - dt.timedelta(days=1)
-    elo_primary = walk_forward(
-        EloForecaster,
-        matches,
-        (PRIMARY_START, primary_end),
-        RefitSchedule(every_days=30),
-    )
-    in_slice = elo_primary["tournament"].isin(TOURNAMENT_SLICE)
-    primary_rows = [scoreboard_row("elo_baseline", elo_primary, seed=seed)]
-    tournament_rows = [scoreboard_row("elo_baseline", elo_primary[in_slice], seed=seed)]
-
     plots_dir.mkdir(parents=True, exist_ok=True)
-    probs = elo_primary[["p_home", "p_draw", "p_away"]].to_numpy(dtype=np.float64)
-    outcomes = elo_primary["outcome"].to_numpy(dtype=np.int64)
-    fig = calibration.reliability_plot(
-        probs, outcomes, title=f"Elo baseline reliability ({PRIMARY_START} to {primary_end})"
-    )
-    plot_path = plots_dir / "reliability_elo_primary.png"
-    fig.savefig(plot_path)
-
-    elo_live = walk_forward(
-        EloForecaster, matches, (WC2026_START, today), RefitSchedule(every_days=1)
-    )
     completed = matches[
         (matches["status"] == "finished") & (matches["date"] >= pd.Timestamp(WC2026_START))
     ]
     market_rows = market_live_rows(store, completed)
 
+    primary_rows = []
+    tournament_rows = []
     live_rows = []
+    plot_paths: dict[str, str] = {}
+    n_live = 0
+    for model in model_lineup():
+        primary = walk_forward(
+            lambda m=model: m,  # type: ignore[misc]
+            matches,
+            (PRIMARY_START, primary_end),
+            RefitSchedule(every_days=30),
+        )
+        primary_rows.append(scoreboard_row(model.name, primary, seed=seed))
+        in_slice = primary["tournament"].isin(TOURNAMENT_SLICE)
+        tournament_rows.append(scoreboard_row(model.name, primary[in_slice], seed=seed))
+
+        probs = primary[["p_home", "p_draw", "p_away"]].to_numpy(dtype=np.float64)
+        outcomes = primary["outcome"].to_numpy(dtype=np.int64)
+        fig = calibration.reliability_plot(
+            probs, outcomes, title=f"{model.name} reliability ({PRIMARY_START} to {primary_end})"
+        )
+        plot_path = plots_dir / f"reliability_{model.name}_primary.png"
+        fig.savefig(plot_path)
+        plot_paths[f"{model.name} reliability (primary)"] = str(
+            plot_path.relative_to(out_md.parent)
+        )
+
+        live = walk_forward(
+            lambda m=model: m,  # type: ignore[misc]
+            matches,
+            (WC2026_START, today),
+            RefitSchedule(every_days=1),
+        )
+        n_live = len(live)
+        if len(live):
+            live_rows.append(scoreboard_row(f"{model.name} (all completed)", live, seed=seed))
+        if len(market_rows):
+            common = live[live["match_id"].isin(market_rows["match_id"])]
+            if len(common):
+                live_rows.append(
+                    scoreboard_row(f"{model.name} (common w/ market)", common, seed=seed)
+                )
+
+    if len(market_rows):
+        live_rows.append(scoreboard_row("market (matches w/ lines)", market_rows, seed=seed))
+
     live_notes = [
-        f"Live Elo rows cover all {len(elo_live)} completed WC matches;"
-        " market rows exist only where a pre-kickoff quote was stored"
-        f" (collection began 2026-06-12): {len(market_rows)} matches so far.",
-        "The Elo-vs-market RPS gap is quantified on their COMMON matches as they"
+        f"Live model rows cover all {n_live} completed WC matches; market rows exist"
+        " only where a pre-kickoff quote was stored (collection began 2026-06-12):"
+        f" {len(market_rows)} matches so far.",
+        "Model-vs-market gaps are quantified on their COMMON matches as they"
         " accumulate; the baseline is expected to lose to the market — that gap is"
         " the target for Dixon-Coles and the Bayesian model.",
     ]
-    if len(elo_live):
-        live_rows.append(scoreboard_row("elo_baseline (all completed)", elo_live, seed=seed))
-    if len(market_rows):
-        live_rows.append(scoreboard_row("market (matches w/ lines)", market_rows, seed=seed))
-        common = elo_live[elo_live["match_id"].isin(market_rows["match_id"])]
-        if len(common):
-            live_rows.append(scoreboard_row("elo_baseline (common subset)", common, seed=seed))
+    methodology_notes = [
+        f"dixon_coles: decay half-life {DEFAULT_HALF_LIFE_DAYS:.0f}d selected by"
+        " walk-forward RPS on an inner 2004-2009 validation window (training always"
+        " pre-cutoff), FROZEN before the 2010+ test window was evaluated; rho fitted"
+        " by MLE; L2 shrinkage of attack/defence toward the average team"
+        " (sparse-team stability). Reproduce with `wc2026 tune-dc`.",
+    ]
 
     markdown = render_results_md(
         generated_utc=dt.datetime.now(dt.UTC),
@@ -129,7 +160,8 @@ def run_report(
         tournament_rows=tournament_rows,
         live_rows=live_rows,
         live_notes=live_notes,
-        plot_paths={"Elo reliability (primary)": str(plot_path.relative_to(out_md.parent))},
+        plot_paths=plot_paths,
+        methodology_notes=methodology_notes,
     )
     out_md.write_text(markdown)
     return markdown

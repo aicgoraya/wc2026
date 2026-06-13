@@ -71,15 +71,17 @@ def predict(days: int = 7) -> None:
     from wc2026.eval.join import join_events_to_fixtures, load_all_quotes, unique_events
     from wc2026.eval.market import BenchmarkPolicy, benchmark_probs, closing_quotes
     from wc2026.models.base import Fixture
-    from wc2026.models.elo import EloForecaster
     from wc2026.pipeline.collect import WC_FIXTURES_DATASET
+    from wc2026.pipeline.evaluate import model_lineup
 
     settings = get_settings()
     store = Store(settings.data_root / "snapshots")
     today = dt.datetime.now(dt.UTC).date()
 
-    model = EloForecaster()
-    model.fit(store.read(MATCHES_DATASET, "matches"), as_of=today + dt.timedelta(days=1))
+    models = model_lineup()
+    canonical = store.read(MATCHES_DATASET, "matches")
+    for model in models:
+        model.fit(canonical, as_of=today + dt.timedelta(days=1))
 
     fixtures = store.read(WC_FIXTURES_DATASET, "matches")
     upcoming = fixtures[
@@ -94,7 +96,8 @@ def predict(days: int = 7) -> None:
     joined = join_events_to_fixtures(unique_events(quotes), fixtures)
     bench = bench.merge(joined, on="event_id").set_index("match_id")
 
-    typer.echo(f"{'date':10s}  {'fixture':38s}  {'elo (H/D/A)':20s}  {'market (H/D/A)':20s}")
+    headers = "  ".join(f"{m.name + ' (H/D/A)':18s}" for m in models)
+    typer.echo(f"{'date':10s}  {'fixture':34s}  {headers}  {'market (H/D/A)':18s}")
     rows = zip(
         upcoming["match_id"].astype(str),
         upcoming["date"],
@@ -104,10 +107,11 @@ def predict(days: int = 7) -> None:
         strict=True,
     )
     for match_id, date, home_id, away_id, neutral in rows:
-        elo = model.predict(
-            Fixture(home_id=home_id, away_id=away_id, date=date.date(), neutral=neutral)
-        )
-        elo_s = f"{elo.home:.2f}/{elo.draw:.2f}/{elo.away:.2f}"
+        fixture = Fixture(home_id=home_id, away_id=away_id, date=date.date(), neutral=neutral)
+        cells = []
+        for model in models:
+            p = model.predict(fixture)
+            cells.append(f"{p.home:.2f}/{p.draw:.2f}/{p.away:.2f}")
         if match_id in bench.index:
             b = bench.loc[match_id]
             ph, pa = (b["p_away"], b["p_home"]) if b["flipped"] else (b["p_home"], b["p_away"])
@@ -115,7 +119,23 @@ def predict(days: int = 7) -> None:
         else:
             market_s = "no line stored"
         name = f"{home_id} v {away_id}"
-        typer.echo(f"{date.date()!s:10s}  {name:38s}  {elo_s:20s}  {market_s:20s}")
+        model_cols = "  ".join(f"{c:18s}" for c in cells)
+        typer.echo(f"{date.date()!s:10s}  {name:34s}  {model_cols}  {market_s:18s}")
+
+
+@app.command()
+def tune_dc() -> None:
+    """Reproduce the leak-free Dixon-Coles half-life selection (inner window)."""
+    from wc2026.config import get_settings
+    from wc2026.data.store import MATCHES_DATASET, Store
+    from wc2026.pipeline.tune import VALIDATION_WINDOW, select_half_life
+
+    settings = get_settings()
+    matches = Store(settings.data_root / "snapshots").read(MATCHES_DATASET, "matches")
+    best, table = select_half_life(matches)
+    typer.echo(f"validation window: {VALIDATION_WINDOW[0]} -> {VALIDATION_WINDOW[1]}")
+    typer.echo(table.to_string(index=False))
+    typer.echo(f"selected half-life: {best:.0f} days")
 
 
 @app.command()

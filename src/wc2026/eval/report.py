@@ -58,6 +58,7 @@ def render_results_md(
     live_rows: Sequence[Mapping[str, object]],
     live_notes: Sequence[str],
     plot_paths: Mapping[str, str],
+    methodology_notes: Sequence[str] = (),
 ) -> str:
     """Assemble RESULTS.md from precomputed scoreboard rows."""
     cols = ["model", "n", "rps", "rps_ci_lo", "rps_ci_hi", "log_loss", "brier", "ece"]
@@ -76,6 +77,8 @@ def render_results_md(
         "only benchmarked on the live track below.",
         "",
         md_table(primary_rows, cols),
+        "",
+        *(f"- {note}" for note in methodology_notes),
         "",
         "### Tournament-only slice (World Cup + continental finals)",
         "",
