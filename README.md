@@ -1,112 +1,98 @@
-# wc2026 — World Cup 2026 Probabilistic Forecasting Engine
+# World Cup 2026 forecaster
 
-Calibrated probability forecasts for the 2026 FIFA World Cup — match outcomes,
-scoreline distributions, and Monte-Carlo tournament simulation — evaluated with
-**proper scoring rules and paired significance tests** against the de-vigged
-betting market, live as the tournament runs.
+I wanted to see if I could predict soccer games better than the betting market, so I spent a
+while this summer building this. It puts probabilities on every 2026 World Cup match (chance of
+home win / draw / away win, plus full scorelines), simulates the whole tournament to get each
+team's odds of winning the cup, and then grades itself against the bookies to see how close I
+actually got.
 
-A ladder of models (Elo → Dixon–Coles → Bayesian hierarchical Poisson → GBM),
-combined into an **ensemble that provably beats every single model**, behind a
-leak-free walk-forward harness, a served dashboard, and a one-command pipeline.
+Short version of what I found: I could not beat a good single model with a fancier single model,
+but I *could* beat it by mixing two of them together. That surprised me and is the most
+interesting part of the project.
 
-> All betting-related analysis is a **simulated, paper-trading study** for
-> measuring calibration and edge. No real wagering, no real-money integration.
+> Heads up: the betting stuff is all paper-trading / just for measuring how good the predictions
+> are. I'm not actually wagering money and there's no real-money anything in here.
 
-## Headline results
+## The results
 
-**Walk-forward, out-of-sample, 2018–2026 (n = 8,107 international matches).** RPS
-is primary (lower is better); the betting market can't be scored here because
-historical closing odds are paywalled — it enters on the live track.
+Everything is scored "walk-forward" — I only ever let a model train on games that happened
+*before* the match it's predicting, so it can't cheat by peeking at the answer. This is on
+~8,000 real international games from 2018–2026. The number is RPS (lower = better; it's the
+standard way to score ordered probability forecasts).
 
-| model | RPS | what it is |
-|---|---:|---|
-| Elo + ordinal logistic | 0.1713 | the baseline floor |
-| Bayesian hierarchical Poisson | 0.1695 | partial pooling, full posterior uncertainty |
-| LightGBM | 0.1705 | discriminative, form/rest/momentum features |
-| **Dixon–Coles** | **0.1675** | best single model |
-| **Ensemble (DC 0.67 + GBM 0.33)** | **0.1655** | **beats every single model** |
+| model | RPS |
+|---|---:|
+| Elo (the simple baseline) | 0.1713 |
+| Bayesian hierarchical Poisson | 0.1695 |
+| LightGBM (gradient boosting) | 0.1705 |
+| **Dixon–Coles** (best single model) | **0.1675** |
+| **Blend of Dixon–Coles + LightGBM** | **0.1655** |
 
-The **ensemble is the result**: no single model beats Dixon–Coles, but a
-leak-free convex blend of DC and the GBM does — by ΔRPS −0.0010 vs DC,
-**p = 2×10⁻³**, walk-forward with weights refit every 180 days, and the edge is
-spread across 6 of 7 years rather than concentrated in one. Two honest negative
-results sit underneath it: the Bayesian model **loses** to the (already
-RPS-regularized) DC, and the partial-pooling hypothesis was **refuted** — both
-reported straight, both pinned with regression tests. See [`RESULTS.md`](RESULTS.md)
-for the full paired board, calibration, and the live World-Cup scoreboard.
+So the Bayesian model and the gradient-boosted model both *lost* to plain Dixon–Coles, which I
+did not expect going in. But if you blend Dixon–Coles with the gradient-boosted model (about 2/3
+to 1/3), the combo beats every single model on its own, and it holds up when I re-pick the blend
+weights every six months and roll forward — not just on one lucky split. The gap is small
+(~0.001 RPS) but it's real and it shows up in 6 of the last 7 years. Full breakdown, calibration
+plots, and the live World-Cup scoreboard are in [RESULTS.md](RESULTS.md).
 
-## What this demonstrates
+## Stuff I learned the hard way
 
-**For quant** — probabilistic forecasting (distributions, never bare labels);
-proper scoring (RPS / log-loss / Brier) with bootstrap CIs; **paired
-significance** (per-match ΔRPS bootstrap + Diebold–Mariano) instead of
-overlapping marginal CIs; market-efficiency benchmarking against the de-vigged
-sharp line; **model combination** (the optimal convex blend) as the source of
-edge; strict **leak-free walk-forward** discipline throughout, including
-hyperparameter selection on inner windows and ensemble weights fit on earlier
-splits than they're tested on.
+- **Combining models is where the edge is.** Each model on its own was fine; the win came from
+  mixing them. The gradient-boosted model adds info the others can't see (recent form, rest days,
+  travel) even though it's worse by itself.
+- **The Bayesian model losing was a good lesson.** The whole pitch for partial pooling is that it
+  helps teams with little data — but my Dixon–Coles model was already regularized, so the fancy
+  prior didn't add much. I left the result in honestly instead of tuning until it "won."
+- **Leakage is sneaky.** Getting the walk-forward right (including how I pick hyperparameters and
+  blend weights) took more care than the models themselves.
+- **Reading the actual rules matters.** The 2026 group tiebreakers use head-to-head *first* now,
+  which is new, and the 8-of-12 third-place bracket is a real 495-row lookup table I had to parse
+  out of FIFA's regulations and golden-test.
 
-**For SWE / infra** — a typed, dependency-injected modular package (`mypy
---strict` clean); **200+ tests** including property tests (Hypothesis),
-golden tests (the exact 495-row Annex C bracket table), and analytic-gradient
-checks; GitHub Actions CI; **cloud data capture** every 6 hours via a scheduled
-Actions workflow committing to a data branch; an idempotent refresh pipeline;
-and a served FastAPI dashboard.
-
-## Architecture
+## What's in here
 
 ```
 src/wc2026/
-  data/         canonical schema, versioned parquet store, fail-loud name resolver, source adapters
-  features/     leak-free match features (single chronological pass)
-  models/       elo · dixon_coles · bayes_poisson (PyMC) · gbm (LightGBM) · blend  (a Forecaster protocol)
-  tournament/   exact 2026 bracket + Annex C table, group tiebreakers, Monte-Carlo simulator
-  eval/         scoring · calibration · paired compare · de-vig market · walk-forward · ensemble
-  pipeline/     collect · ingest · evaluate/report · tune · refresh
-  dashboard/    FastAPI app + static page over the snapshot JSON
-  cli.py        the `wc2026` command
+  data/         pulling + cleaning game data and odds, name matching, a little versioned store
+  features/     match features the boosting model uses (form, rest, momentum) — all leak-free
+  models/       elo · dixon_coles · bayes_poisson (PyMC) · gbm (LightGBM) · the blend
+  tournament/   the real 2026 bracket + Annex C table, group tiebreakers, the Monte-Carlo sim
+  eval/         scoring, calibration, the paired significance tests, market de-vigging, ensemble
+  pipeline/     pull data → update models → re-simulate → regenerate the results
+  dashboard/    a little FastAPI page that shows it all
 ```
 
-Every model implements one `Forecaster` protocol, so a new model (or the blend)
-drops into the same walk-forward harness, scoreboard, and — for the generative
-ones — the tournament simulator, unchanged.
+Every model speaks the same interface, so the blend and the tournament simulator don't care which
+one you hand them.
 
-## Reproducibility
+## Running it
 
 ```bash
-make setup                     # uv sync (Python 3.12, pinned via uv.lock)
-uv sync --extra bayes --extra gbm --extra dashboard   # heavier model deps
-cp .env.example .env           # add free API keys (football-data.org, the-odds-api.com)
-make check                     # ruff + mypy --strict + pytest
+make setup                                   # installs everything (uses uv + Python 3.12)
+cp .env.example .env                         # add two free API keys if you want live data
+make check                                   # lint + types + tests
 
-uv run wc2026 refresh          # pull data, rebuild dataset, regenerate RESULTS.md + dashboard
-uv run wc2026 simulate         # live win-cup table (Dixon–Coles, 50k sims)
-uv run wc2026 model-compare     # four-model paired board + ensemble (uses cached MCMC)
-uv run wc2026 dashboard         # serve the dashboard at http://127.0.0.1:8000
+uv run wc2026 simulate                       # win-the-cup table from 50k simulations
+uv run wc2026 model-compare                  # the model-vs-model scoreboard + the blend
+uv run wc2026 refresh                        # pull latest, rebuild everything
+uv run wc2026 dashboard                      # http://127.0.0.1:8000
 ```
 
-Everything is deterministic: seeded RNG, versioned data snapshots, pinned
-dependencies. `tune-dc` and `model-compare` reproduce the frozen
-hyperparameters and the paired board exactly.
+It's all seeded and reproducible, and there are 200+ tests (including a few property-based ones
+and the golden test for the bracket) plus CI on every push.
 
-## Limitations (read this)
+## Things I'd flag honestly
 
-- **The market is hard to beat.** Matching the closing line out-of-sample is
-  already a strong result; the live blend-vs-market scoreboard starts empty and
-  accumulates as matches complete *with stored pre-kickoff lines* — it shows
-  `n so far` and draws no conclusions while small. That honesty is the point.
-- **No player-level data** for internationals (no lineups/injuries the way club
-  leagues have); team-strength latent models are the right abstraction, and the
-  features deliberately don't assume lineup data.
-- **Small-sample sport.** International football is noisy; the edges here are
-  real but modest (~0.001 RPS), and the Bayesian/GBM models *lose* to a
-  well-regularized Dixon–Coles — reported straight rather than spun.
-- **Closing-line proxy.** Free-tier odds are snapshotted every 6h, so the
-  "closing" line trails the true close by up to ~6h, applied uniformly.
-- **Tiebreaker approximation.** The simulator implements the exact 2026 group
-  criteria (head-to-head first); the unsimulatable fair-play / FIFA-ranking
-  final steps fall back to a seeded lot, reached too rarely to move results.
+- **The market is genuinely hard to beat.** Matching the closing line is already a strong result;
+  the live "can I beat the bookies" scoreboard starts at zero matches and only grows as games
+  finish *and* I had odds stored beforehand. It shows how many matches it's actually scored so far
+  and I don't draw any conclusions while that number is tiny. That honesty is kind of the point.
+- International soccer is small-sample and noisy, so all the edges here are small.
+- There's no player/injury/lineup data for national teams the way there is for clubs, so the
+  models work at the team-strength level on purpose.
+- The "closing" odds I compare against are snapshotted every 6 hours, so they can be a little
+  stale, but the same way for every match.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — do whatever you want with it.
