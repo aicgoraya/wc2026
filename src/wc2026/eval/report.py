@@ -60,6 +60,7 @@ def render_results_md(
     plot_paths: Mapping[str, str],
     paired_rows: Sequence[Mapping[str, object]] = (),
     methodology_notes: Sequence[str] = (),
+    extra_sections: Sequence[str] = (),
 ) -> str:
     """Assemble RESULTS.md from precomputed scoreboard rows."""
     cols = ["model", "n", "rps", "rps_ci_lo", "rps_ci_hi", "log_loss", "brier", "ece"]
@@ -113,4 +114,6 @@ def render_results_md(
     )
     parts.extend(f"- {note}" for note in live_notes)
     parts.append("")
+    for section in extra_sections:
+        parts.extend([section, ""])
     return "\n".join(parts)

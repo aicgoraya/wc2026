@@ -196,6 +196,13 @@ def run_report(
         " Reproduce with `wc2026 tune-dc`.",
     ]
 
+    # Embed the Phase 4 Bayesian comparison if it has been generated
+    # (by `wc2026 bayes-compare`); never re-runs the expensive MCMC here.
+    extra_sections: list[str] = []
+    bayes_md = plots_dir / "bayes_comparison.md"
+    if bayes_md.exists():
+        extra_sections.append(bayes_md.read_text().strip())
+
     markdown = render_results_md(
         generated_utc=dt.datetime.now(dt.UTC),
         primary_rows=primary_rows,
@@ -206,6 +213,7 @@ def run_report(
         live_notes=live_notes,
         plot_paths=plot_paths,
         methodology_notes=methodology_notes,
+        extra_sections=extra_sections,
     )
     out_md.write_text(markdown)
     return markdown
