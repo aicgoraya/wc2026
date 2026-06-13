@@ -20,7 +20,11 @@ from wc2026.eval.market import BenchmarkPolicy, benchmark_probs, closing_quotes
 from wc2026.eval.report import render_results_md, scoreboard_row
 from wc2026.eval.walkforward import RefitSchedule, walk_forward
 from wc2026.models.base import Forecaster
-from wc2026.models.dixon_coles import DEFAULT_HALF_LIFE_DAYS, DixonColesForecaster
+from wc2026.models.dixon_coles import (
+    DEFAULT_HALF_LIFE_DAYS,
+    DEFAULT_L2,
+    DixonColesForecaster,
+)
 from wc2026.models.elo import EloForecaster
 from wc2026.pipeline.collect import WC_FIXTURES_DATASET
 
@@ -146,11 +150,12 @@ def run_report(
         " the target for Dixon-Coles and the Bayesian model.",
     ]
     methodology_notes = [
-        f"dixon_coles: decay half-life {DEFAULT_HALF_LIFE_DAYS:.0f}d selected by"
-        " walk-forward RPS on an inner 2004-2009 validation window (training always"
-        " pre-cutoff), FROZEN before the 2010+ test window was evaluated; rho fitted"
-        " by MLE; L2 shrinkage of attack/defence toward the average team"
-        " (sparse-team stability). Reproduce with `wc2026 tune-dc`.",
+        f"dixon_coles: decay half-life ({DEFAULT_HALF_LIFE_DAYS:.0f}d) and L2 shrinkage"
+        f" ({DEFAULT_L2}) selected JOINTLY by walk-forward RPS on an inner 2004-2009"
+        " validation window (training always pre-cutoff), frozen and committed before"
+        " the 2010+ test window was evaluated — full table in results/dc_tuning.md;"
+        " rho and the neutral listed-home coefficient fitted by MLE."
+        " Reproduce with `wc2026 tune-dc`.",
     ]
 
     markdown = render_results_md(

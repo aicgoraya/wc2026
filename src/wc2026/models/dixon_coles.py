@@ -1,9 +1,10 @@
 """Phase 2: Dixon-Coles bivariate Poisson with time decay.
 
-Model (Dixon & Coles 1997): independent Poisson goal counts with
-``log lam_home = c + attack_h - defence_a + gamma * is_true_home`` and
-``log lam_away = c + attack_a - defence_h``, corrected for low-score
-dependence by the tau factor on the (0,0), (0,1), (1,0), (1,1) cells:
+Model (Dixon & Coles 1997, plus one empirical term): independent Poisson goal
+counts with ``log lam_home = c + attack_h - defence_a + home_adv *
+is_true_home + neutral_adv * is_neutral`` and ``log lam_away = c + attack_a -
+defence_h``, corrected for low-score dependence by the tau factor on the
+(0,0), (0,1), (1,0), (1,1) cells:
 
     tau(0,0) = 1 - lam_h*lam_a*rho    tau(0,1) = 1 + lam_h*rho
     tau(1,0) = 1 + lam_a*rho          tau(1,1) = 1 - rho
@@ -20,8 +21,13 @@ Fitting is weighted MLE with exponential time decay
   location softly); after fitting, attack/defence are centered to mean zero
   EXACTLY and the intercept absorbs the shift — a pure reparameterization
   that leaves every lambda unchanged.
-- **Venue semantics**: identical to the Elo baseline — ``gamma`` applies
-  only when ``neutral`` is False (true home games, incl. WC hosts).
+- **Venue semantics**: ``home_adv`` applies only when ``neutral`` is False
+  (true home games, incl. WC hosts), as in the Elo baseline. ``neutral_adv``
+  is a small fitted coefficient for the listed-home side at NEUTRAL venues:
+  empirically the listed side wins ~7 points more often than the away side
+  at neutrals even conditional on strength (listing conventions correlate
+  with seeding/administrative home). Elo's ordinal link absorbs this
+  asymmetry automatically; without this term DC structurally cannot.
 
 The decay half-life is a hyperparameter selected leak-free on an inner
 validation window that precedes the reported test period (see
@@ -42,11 +48,14 @@ from wc2026.models.base import Fixture, OutcomeProbs, ScorelineDist
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
 
-DEFAULT_HALF_LIFE_DAYS = 2920.0
-"""Frozen by the inner-window selection (pipeline.tune, run 2026-06-13):
-walk-forward RPS on 2004-2009 was 0.1755 / 0.1766 / 0.1807 / 0.1892 for
-half-lives 2920 / 1460 / 730 / 365 days. Selected before the 2010+ test
-window was ever evaluated; see RESULTS.md."""
+DEFAULT_HALF_LIFE_DAYS = 1460.0
+DEFAULT_L2 = 0.25
+"""(half_life, l2) are selected JOINTLY by the leak-free inner-window
+procedure in pipeline.tune and frozen here before the 2010+ test window is
+evaluated; the full selection table lives in results/dc_tuning.md. The
+2026-06-13 run picked (1460d, 0.25) at inner-window (2004-2009) RPS 0.17169,
+beating the prior single-param default (2920d, 5.0) at 0.17629 — l2=5.0 was
+over-shrinking team strengths."""
 
 RHO_BOUND = 0.2
 _LOG_LAMBDA_CLIP = (-10.0, 6.0)  # keeps exp() finite during line searches
@@ -60,6 +69,7 @@ class DCParams:
     teams: tuple[str, ...]
     intercept: float
     home_adv: float
+    neutral_adv: float
     rho: float
     attack: FloatArray
     defence: FloatArray
@@ -132,11 +142,18 @@ class _FitData:
 def _nll_and_grad(theta: FloatArray, data: _FitData, l2: float) -> tuple[float, FloatArray]:
     """Penalized weighted negative log likelihood and its gradient."""
     t = data.n_teams
-    intercept, home_adv, rho = theta[0], theta[1], theta[2]
-    attack = theta[3 : 3 + t]
-    defence = theta[3 + t :]
+    intercept, home_adv, neutral_adv, rho = theta[0], theta[1], theta[2], theta[3]
+    attack = theta[4 : 4 + t]
+    defence = theta[4 + t :]
 
-    u = intercept + attack[data.home_idx] - defence[data.away_idx] + home_adv * data.is_home
+    is_neutral = 1.0 - data.is_home
+    u = (
+        intercept
+        + attack[data.home_idx]
+        - defence[data.away_idx]
+        + home_adv * data.is_home
+        + neutral_adv * is_neutral
+    )
     v = intercept + attack[data.away_idx] - defence[data.home_idx]
     u = np.clip(u, *_LOG_LAMBDA_CLIP)
     v = np.clip(v, *_LOG_LAMBDA_CLIP)
@@ -157,7 +174,8 @@ def _nll_and_grad(theta: FloatArray, data: _FitData, l2: float) -> tuple[float, 
     grad = np.empty_like(theta)
     grad[0] = -float(np.sum(g_u + g_v))
     grad[1] = -float(np.dot(g_u, data.is_home))
-    grad[2] = -float(np.dot(data.weights, dtau_rho))
+    grad[2] = -float(np.dot(g_u, is_neutral))
+    grad[3] = -float(np.dot(data.weights, dtau_rho))
     grad_attack = -(
         np.bincount(data.home_idx, weights=g_u, minlength=t)
         + np.bincount(data.away_idx, weights=g_v, minlength=t)
@@ -165,8 +183,8 @@ def _nll_and_grad(theta: FloatArray, data: _FitData, l2: float) -> tuple[float, 
     grad_defence = np.bincount(data.away_idx, weights=g_u, minlength=t) + np.bincount(
         data.home_idx, weights=g_v, minlength=t
     )
-    grad[3 : 3 + t] = grad_attack + 2.0 * l2 * attack
-    grad[3 + t :] = grad_defence + 2.0 * l2 * defence
+    grad[4 : 4 + t] = grad_attack + 2.0 * l2 * attack
+    grad[4 + t :] = grad_defence + 2.0 * l2 * defence
     return nll, grad
 
 
@@ -179,7 +197,7 @@ class DixonColesForecaster:
         self,
         half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
         max_goals: int = 10,
-        l2: float = 5.0,
+        l2: float = DEFAULT_L2,
         train_window_years: int = 25,
     ) -> None:
         self._half_life_days = half_life_days
@@ -225,7 +243,7 @@ class DixonColesForecaster:
         )
 
         theta0 = self._warm_start(teams)
-        bounds = [(None, None), (None, None), (-RHO_BOUND, RHO_BOUND)]
+        bounds = [(None, None), (None, None), (None, None), (-RHO_BOUND, RHO_BOUND)]
         bounds += [(None, None)] * (2 * len(teams))
         result = minimize(
             _nll_and_grad,
@@ -240,8 +258,8 @@ class DixonColesForecaster:
             raise RuntimeError(f"Dixon-Coles fit failed: {result.message}")
 
         t = len(teams)
-        attack = result.x[3 : 3 + t]
-        defence = result.x[3 + t :]
+        attack = result.x[4 : 4 + t]
+        defence = result.x[4 + t :]
         # exact sum-to-zero canonicalization; intercept absorbs the shift so
         # every lambda is unchanged (mean_a enters both u and v symmetrically)
         mean_a, mean_d = float(attack.mean()), float(defence.mean())
@@ -249,26 +267,29 @@ class DixonColesForecaster:
             teams=teams,
             intercept=float(result.x[0]) + mean_a - mean_d,
             home_adv=float(result.x[1]),
-            rho=float(result.x[2]),
+            neutral_adv=float(result.x[2]),
+            rho=float(result.x[3]),
             attack=attack - mean_a,
             defence=defence - mean_d,
         )
 
     def _warm_start(self, teams: tuple[str, ...]) -> FloatArray:
-        theta = np.zeros(3 + 2 * len(teams))
+        theta = np.zeros(4 + 2 * len(teams))
         theta[0] = np.log(1.3)  # ~mean international goals per side
         theta[1] = 0.3
-        theta[2] = -0.05
+        theta[2] = 0.0
+        theta[3] = -0.05
         if self._params is not None:
             old = self._params.index()
             for i, team in enumerate(teams):
                 if team in old:
                     j = old[team]
-                    theta[3 + i] = self._params.attack[j]
-                    theta[3 + len(teams) + i] = self._params.defence[j]
+                    theta[4 + i] = self._params.attack[j]
+                    theta[4 + len(teams) + i] = self._params.defence[j]
             theta[0] = self._params.intercept
             theta[1] = self._params.home_adv
-            theta[2] = self._params.rho
+            theta[2] = self._params.neutral_adv
+            theta[3] = self._params.rho
         return theta
 
     def _lambdas(self, fixture: Fixture) -> tuple[float, float]:
@@ -278,7 +299,7 @@ class DixonColesForecaster:
         defence = {t: params.defence[i] for t, i in index.items()}
         a_h, d_h = attack.get(fixture.home_id, 0.0), defence.get(fixture.home_id, 0.0)
         a_a, d_a = attack.get(fixture.away_id, 0.0), defence.get(fixture.away_id, 0.0)
-        gamma = 0.0 if fixture.neutral else params.home_adv
+        gamma = params.neutral_adv if fixture.neutral else params.home_adv
         u = np.clip(params.intercept + a_h - d_a + gamma, *_LOG_LAMBDA_CLIP)
         v = np.clip(params.intercept + a_a - d_h, *_LOG_LAMBDA_CLIP)
         return float(np.exp(u)), float(np.exp(v))

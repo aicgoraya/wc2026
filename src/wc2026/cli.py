@@ -125,17 +125,40 @@ def predict(days: int = 7) -> None:
 
 @app.command()
 def tune_dc() -> None:
-    """Reproduce the leak-free Dixon-Coles half-life selection (inner window)."""
+    """Reproduce the leak-free Dixon-Coles (half-life, l2) selection (inner window)."""
+    from pathlib import Path
+
     from wc2026.config import get_settings
     from wc2026.data.store import MATCHES_DATASET, Store
-    from wc2026.pipeline.tune import VALIDATION_WINDOW, select_half_life
+    from wc2026.pipeline.tune import VALIDATION_WINDOW, select_hyperparams
 
     settings = get_settings()
     matches = Store(settings.data_root / "snapshots").read(MATCHES_DATASET, "matches")
-    best, table = select_half_life(matches)
+    (half_life, l2), table = select_hyperparams(matches)
     typer.echo(f"validation window: {VALIDATION_WINDOW[0]} -> {VALIDATION_WINDOW[1]}")
     typer.echo(table.to_string(index=False))
-    typer.echo(f"selected half-life: {best:.0f} days")
+    typer.echo(f"selected: half_life={half_life:.0f}d, l2={l2}")
+
+    from wc2026.eval.report import md_table
+
+    out = Path("results/dc_tuning.md")
+    out.parent.mkdir(exist_ok=True)
+    lines = [
+        "# Dixon-Coles hyperparameter selection (leak-free inner window)",
+        "",
+        f"Walk-forward RPS on {VALIDATION_WINDOW[0]} -> {VALIDATION_WINDOW[1]};"
+        " training always strictly pre-cutoff; the 2010+ test window is never"
+        " touched by this selection. Selected and FROZEN before the test window"
+        f" was evaluated: half_life={half_life:.0f}d, l2={l2}.",
+        "",
+        md_table(
+            [{str(k): v for k, v in row.items()} for row in table.to_dict("records")],
+            [str(c) for c in table.columns],
+        ),
+        "",
+    ]
+    out.write_text("\n".join(lines))
+    typer.echo(f"selection table written to {out}")
 
 
 @app.command()

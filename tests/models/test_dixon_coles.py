@@ -32,7 +32,7 @@ class TestGradient:
     def test_analytic_matches_numeric(self, seed: int) -> None:
         data = random_fit_data(seed=seed)
         rng = np.random.default_rng(seed + 100)
-        theta = np.concatenate([[0.2, 0.25, -0.08], rng.normal(0, 0.3, 2 * data.n_teams)])
+        theta = np.concatenate([[0.2, 0.25, 0.06, -0.08], rng.normal(0, 0.3, 2 * data.n_teams)])
         _, analytic = _nll_and_grad(theta, data, l2=3.0)
         numeric = approx_fprime(theta, lambda t: _nll_and_grad(t, data, l2=3.0)[0], 1e-7)
         np.testing.assert_allclose(analytic, numeric, rtol=2e-4, atol=2e-4)
@@ -45,6 +45,7 @@ def simulate_matches(
     n_rounds: int,
     intercept: float = 0.25,
     home_adv: float = 0.3,
+    neutral_adv: float = 0.0,
     seed: int = 0,
     start: dt.date = dt.date(2015, 1, 1),
 ) -> list[Match]:
@@ -61,9 +62,8 @@ def simulate_matches(
                 i += 1
                 day += dt.timedelta(days=1)
                 neutral = bool(rng.integers(0, 2))
-                lam_h = np.exp(
-                    intercept + attack[home] - defence[away] + (0 if neutral else home_adv)
-                )
+                venue = neutral_adv if neutral else home_adv
+                lam_h = np.exp(intercept + attack[home] - defence[away] + venue)
                 lam_a = np.exp(intercept + attack[away] - defence[home])
                 matches.append(
                     Match(
@@ -148,6 +148,22 @@ class TestFit:
         alpha_attack = params.attack[params.index()["alpha"]]
         assert 0 < newcomer_attack < alpha_attack  # nudged up, NOT past the proven best
 
+    def test_neutral_listed_home_edge_recovered(self) -> None:
+        # data generated WITH a listed-home edge at neutral venues: the fitted
+        # neutral_adv must pick it up, and predictions at neutral must be
+        # asymmetric between the listed orientations
+        history = simulate_matches(TRUE_ATTACK, TRUE_DEFENCE, n_rounds=40, neutral_adv=0.18, seed=7)
+        model = DixonColesForecaster(half_life_days=1e6, l2=1.0)
+        model.fit(matches_to_frame(history), as_of=dt.date(2020, 1, 1))
+        assert model.params.neutral_adv == pytest.approx(0.18, abs=0.08)
+        listed = model.predict(Fixture("echo", "bravo", dt.date(2020, 7, 1), neutral=True))
+        flipped = model.predict(Fixture("bravo", "echo", dt.date(2020, 7, 1), neutral=True))
+        assert listed.home > flipped.away  # the listed side keeps the neutral edge
+
+    def test_neutral_adv_near_zero_when_absent(self, fitted: DixonColesForecaster) -> None:
+        # the module fixture's data has no neutral edge: coefficient stays small
+        assert abs(fitted.params.neutral_adv) < 0.08
+
     def test_decay_prefers_recent_form(self) -> None:
         # zulu was great long ago, terrible recently; with a short half-life
         # the model must rate them below average
@@ -178,7 +194,10 @@ class TestPredict:
         dist = fitted.predict_scoreline(fixture)
         idx = params.index()
         lam_h = np.exp(
-            params.intercept + params.attack[idx["alpha"]] - params.defence[idx["delta"]]
+            params.intercept
+            + params.attack[idx["alpha"]]
+            - params.defence[idx["delta"]]
+            + params.neutral_adv  # fixture is neutral: listed-home term applies
         )
         lam_a = np.exp(
             params.intercept + params.attack[idx["delta"]] - params.defence[idx["alpha"]]
