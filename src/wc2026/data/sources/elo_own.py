@@ -20,6 +20,7 @@ Absolute levels differ from eloratings.net (different seeding era and minor
 rule details); rank ORDER is the meaningful comparison.
 """
 
+import dataclasses
 import datetime as dt
 import math
 
@@ -67,20 +68,34 @@ def goal_diff_multiplier(margin: int) -> float:
     return 1.75 + (margin - 3) / 8.0
 
 
-def compute_elo(
+@dataclasses.dataclass(frozen=True)
+class EloReplay:
+    """Result of one chronological replay up to a cutoff.
+
+    ``samples`` holds one row per replayed match with the PRE-MATCH rating
+    difference (home perspective, home advantage included) and the outcome
+    code (0 home / 1 draw / 2 away) — by construction every row only contains
+    information available before that match's kickoff, so a link function fit
+    on ``samples`` is walk-forward clean.
+    """
+
+    ratings: dict[str, float]
+    n_matches: dict[str, int]
+    last_played: dict[str, pd.Timestamp]
+    samples: pd.DataFrame  # columns: date, xdiff, outcome
+
+
+def replay(
     matches: pd.DataFrame,
     *,
     as_of: dt.date,
     home_advantage: float = 100.0,
-) -> pd.DataFrame:
-    """Replay finished matches STRICTLY BEFORE ``as_of``; one rating per team.
+) -> EloReplay:
+    """Replay finished matches STRICTLY BEFORE ``as_of`` in date order.
 
     The strict cutoff is the leak guard: a rating "as of" a date never
     contains that date's results, so predicting a match with its same-day
     rating is walk-forward clean.
-
-    Returns a frame (team_id, rating, n_matches, last_played) sorted by
-    rating, descending.
     """
     finished = matches["status"] == "finished"
     before = matches["date"] < pd.Timestamp(as_of)
@@ -89,6 +104,9 @@ def compute_elo(
     ratings: dict[str, float] = {}
     counts: dict[str, int] = {}
     last_played: dict[str, pd.Timestamp] = {}
+    sample_dates: list[pd.Timestamp] = []
+    sample_xdiff: list[float] = []
+    sample_outcome: list[int] = []
 
     rows = zip(
         window["home_id"],
@@ -104,13 +122,17 @@ def compute_elo(
         home = ratings.get(home_id, INITIAL_RATING)
         away = ratings.get(away_id, INITIAL_RATING)
         advantage = 0.0 if neutral else home_advantage
-        expected_home = 1.0 / (1.0 + math.pow(10.0, -((home + advantage) - away) / 400.0))
+        xdiff = (home + advantage) - away
+        expected_home = 1.0 / (1.0 + math.pow(10.0, -xdiff / 400.0))
         if home_goals > away_goals:
-            result_home = 1.0
+            result_home, outcome = 1.0, 0
         elif home_goals < away_goals:
-            result_home = 0.0
+            result_home, outcome = 0.0, 2
         else:
-            result_home = 0.5
+            result_home, outcome = 0.5, 1
+        sample_dates.append(date)
+        sample_xdiff.append(xdiff)
+        sample_outcome.append(outcome)
         delta = (
             tournament_k(tournament)
             * goal_diff_multiplier(abs(home_goals - away_goals))
@@ -122,12 +144,24 @@ def compute_elo(
             counts[team] = counts.get(team, 0) + 1
             last_played[team] = date
 
+    samples = pd.DataFrame({"date": sample_dates, "xdiff": sample_xdiff, "outcome": sample_outcome})
+    return EloReplay(ratings=ratings, n_matches=counts, last_played=last_played, samples=samples)
+
+
+def compute_elo(
+    matches: pd.DataFrame,
+    *,
+    as_of: dt.date,
+    home_advantage: float = 100.0,
+) -> pd.DataFrame:
+    """Rating table from a replay: (team_id, rating, n_matches, last_played), best first."""
+    rep = replay(matches, as_of=as_of, home_advantage=home_advantage)
     frame = pd.DataFrame(
         {
-            "team_id": list(ratings),
-            "rating": [ratings[t] for t in ratings],
-            "n_matches": [counts[t] for t in ratings],
-            "last_played": [last_played[t] for t in ratings],
+            "team_id": list(rep.ratings),
+            "rating": [rep.ratings[t] for t in rep.ratings],
+            "n_matches": [rep.n_matches[t] for t in rep.ratings],
+            "last_played": [rep.last_played[t] for t in rep.ratings],
         }
     )
     return frame.sort_values("rating", ascending=False, ignore_index=True)
