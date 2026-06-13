@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WC 2026 · Probabilistic Forecaster</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --line:#272e38; --text:#e6edf3; --muted:#8b949e;
+    --accent:#4493f8; --good:#3fb950; --warn:#d29922; --bar:#1f6feb33;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:28px 32px 12px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:22px; letter-spacing:-.2px; }
+  .sub { color:var(--muted); margin-top:4px; font-size:13px; }
+  main { padding:24px 32px; max-width:1180px; margin:0 auto;
+    display:grid; gap:22px; grid-template-columns:1fr 1fr; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  section.wide { grid-column:1 / -1; }
+  h2 { margin:0 0 12px; font-size:15px; }
+  h2 small { color:var(--muted); font-weight:400; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  tr:last-child td { border-bottom:none; }
+  .team { font-weight:600; }
+  .best { color:var(--good); font-weight:600; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; background:var(--bar);
+    color:var(--accent); font-size:11px; }
+  .warn { color:var(--warn); }
+  .muted { color:var(--muted); }
+  .triple span { display:inline-block; min-width:34px; text-align:right; }
+  footer { padding:18px 32px 40px; color:var(--muted); font-size:12px; max-width:1180px; margin:0 auto; }
+  a { color:var(--accent); }
+  .err { padding:40px; text-align:center; color:var(--warn); }
+  svg text { fill:var(--muted); font-size:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FIFA World Cup 2026 — Probabilistic Forecaster</h1>
+  <div class="sub" id="sub">loading…</div>
+</header>
+<main id="main"></main>
+<footer>
+  Calibrated probabilities, scored with proper rules against the de-vigged betting market.
+  Betting analysis is a simulated, paper-trading study — no real wagering.
+  <span id="gen"></span>
+</footer>
+<script>
+const pct = x => (x==null) ? "—" : (100*x).toFixed(0);
+const triple = p => p ? `<span class="triple"><span>${pct(p.home)}</span> <span class="muted">/</span> <span>${pct(p.draw)}</span> <span class="muted">/</span> <span>${pct(p.away)}</span></span>` : `<span class="muted">no line</span>`;
+
+function table(headers, rows) {
+  const h = headers.map(x=>`<th>${x}</th>`).join("");
+  const b = rows.map(r=>`<tr>${r.map((c,i)=>`<td${i===0?' class="team"':''}>${c}</td>`).join("")}</tr>`).join("");
+  return `<table><thead><tr>${h}</tr></thead><tbody>${b}</tbody></table>`;
+}
+
+function reliabilitySVG(bins) {
+  if(!bins || !bins.length) return '<div class="muted">no data</div>';
+  const W=260,H=260,pad=28;
+  const sx=v=>pad+v*(W-2*pad), sy=v=>H-pad-v*(H-2*pad);
+  const diag=`<line x1="${sx(0)}" y1="${sy(0)}" x2="${sx(1)}" y2="${sy(1)}" stroke="#3a4250" stroke-dasharray="4 4"/>`;
+  const pts=bins.map(b=>`<circle cx="${sx(b.p_pred)}" cy="${sy(b.p_emp)}" r="${3+Math.min(6,Math.sqrt(b.n)/4)}" fill="#4493f8aa"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:300px">
+    <rect x="${pad}" y="${pad}" width="${W-2*pad}" height="${H-2*pad}" fill="none" stroke="#272e38"/>
+    ${diag}${pts}
+    <text x="${W/2}" y="${H-6}" text-anchor="middle">predicted probability</text>
+    <text x="10" y="${H/2}" text-anchor="middle" transform="rotate(-90 10 ${H/2})">empirical frequency</text>
+  </svg>`;
+}
+
+function render(d) {
+  document.getElementById("sub").textContent =
+    `Models: Elo · Dixon–Coles · Bayesian · GBM · Blend (DC ${d.blend_weights.dixon_coles}, GBM ${d.blend_weights.gbm}) — vs the market`;
+  document.getElementById("gen").textContent = "Generated " + (d.generated_utc||"").slice(0,16).replace("T"," ") + " UTC";
+  const m = document.getElementById("main");
+  const parts = [];
+
+  // upcoming (next handful, for a tight above-the-fold view)
+  const up = (d.upcoming||[]).slice(0, 12).map(r => [
+    `${r.home} v ${r.away} <span class="muted">${r.date}</span>`,
+    triple(r.dixon_coles), triple(r.blend), triple(r.market),
+  ]);
+  parts.push(`<section class="wide"><h2>Upcoming matches <small>P(home / draw / away), %</small></h2>
+    ${up.length ? table(["fixture","Dixon–Coles","Blend","Market"], up) : '<div class="muted">no upcoming fixtures in range</div>'}</section>`);
+
+  // win cup
+  const wc = (d.win_cup||[]).slice(0,16).map(r => [r.team, r.reach_r16, r.reach_qf, r.reach_sf, r.reach_final, `<b>${r.champion}</b>`]);
+  parts.push(`<section><h2>Win-cup table <small>Monte-Carlo, % (Dixon–Coles)</small></h2>
+    ${table(["team","R16","QF","SF","Final","Champ"], wc)}</section>`);
+
+  // model board
+  const mb = (d.model_board||[]);
+  const bestRps = Math.min(...mb.map(r=>r.rps));
+  parts.push(`<section><h2>Model scoreboard <small>walk-forward RPS, 2018–2026 (lower better)</small></h2>
+    ${table(["model","RPS"], mb.map(r=>[r.model, `<span class="${r.rps===bestRps?'best':''}">${r.rps.toFixed(4)}</span>`]))}</section>`);
+
+  // live vs market
+  const lv = d.live_vs_market || {n:0, scoreboard:[]};
+  let lvBody;
+  if (!lv.n) lvBody = `<div class="muted">${lv.note||"no scored matches yet"}</div>`;
+  else {
+    const best = Math.min(...lv.scoreboard.map(r=>r.rps));
+    lvBody = `<div class="${lv.n<30?'warn':''}">n = ${lv.n} matches scored so far ${lv.note?`· ${lv.note}`:''}</div>` +
+      table(["model","RPS"], lv.scoreboard.map(r=>[r.model, `<span class="${r.rps===best?'best':''}">${r.rps.toFixed(4)}</span>`]));
+  }
+  parts.push(`<section><h2>Blend vs market — live <small>WC 2026, closing-line proxy</small></h2>${lvBody}</section>`);
+
+  // calibration
+  const cal = d.calibration || {bins:[]};
+  parts.push(`<section><h2>Calibration <small>Dixon–Coles, ECE ${cal.ece??"—"}</small></h2>${reliabilitySVG(cal.bins)}</section>`);
+
+  m.innerHTML = parts.join("");
+}
+
+fetch("/api/data").then(r=>r.json()).then(d=>{
+  if (d.error) { document.getElementById("main").innerHTML = `<div class="err">${d.error}</div>`; return; }
+  render(d);
+}).catch(e=>{ document.getElementById("main").innerHTML = `<div class="err">failed to load: ${e}</div>`; });
+</script>
+</body>
+</html>

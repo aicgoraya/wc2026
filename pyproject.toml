@@ -33,6 +33,7 @@ dev = [
     "mypy>=1.10,<2",
     "pandas-stubs>=2.2",
     "types-requests>=2.32",
+    "httpx>=0.27",
 ]
 
 [build-system]
@@ -69,7 +70,7 @@ packages = ["wc2026"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "matplotlib.*", "pyarrow.*"]
+module = ["scipy.*", "matplotlib.*", "pyarrow.*", "uvicorn.*", "fastapi.*", "lightgbm.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -79,6 +80,11 @@ module = ["pymc.*", "pytensor.*", "arviz.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 follow_imports_for_stubs = true
+
+[[tool.mypy.overrides]]
+# FastAPI's route decorators are untyped; that's the framework, not our code
+module = ["wc2026.dashboard.app"]
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

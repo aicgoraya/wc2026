@@ -55,8 +55,22 @@ def ingest_history() -> None:
 
 @app.command()
 def refresh() -> None:
-    """Pull new results and odds, refit models, re-simulate, regenerate RESULTS.md."""
-    _not_yet("Phase 1")
+    """Idempotent: pull results+odds, rebuild dataset, regenerate RESULTS.md + dashboard."""
+    from wc2026.config import get_settings
+    from wc2026.pipeline.refresh import refresh as run_refresh
+
+    result = run_refresh(get_settings())
+    for step in result.steps:
+        colour = typer.colors.GREEN if step.startswith("ok") else typer.colors.YELLOW
+        typer.secho(step, fg=colour)
+
+
+@app.command()
+def dashboard(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Serve the FastAPI dashboard over the latest dashboard.json."""
+    import uvicorn
+
+    uvicorn.run("wc2026.dashboard.app:app", host=host, port=port, log_level="info")
 
 
 @app.command()
