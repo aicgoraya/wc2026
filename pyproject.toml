@@ -72,6 +72,14 @@ warn_unreachable = true
 module = ["scipy.*", "matplotlib.*", "pyarrow.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# pymc/pytensor/arviz ship py.typed but are effectively untyped at the call
+# sites we use; skip following them so their returns are treated as Any.
+module = ["pymc.*", "pytensor.*", "arviz.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
