@@ -170,3 +170,62 @@ class TestPredict:
     def test_predict_before_fit_raises(self) -> None:
         with pytest.raises(RuntimeError, match="fit"):
             BayesPoissonForecaster(FAST).predict(Fixture("a", "b", dt.date(2026, 1, 1)))
+
+
+class TestFullPosteriorPredictive:
+    """1X2 must be the full posterior predictive (per-draw grids averaged), NOT a
+    plug-in on posterior-mean parameters. The two differ by Jensen's inequality
+    whenever the posterior has spread, so this pins the correct object."""
+
+    def _posterior_with_spread(self):  # type: ignore[no-untyped-def]
+        from wc2026.models.bayes_poisson import _Posterior
+
+        rng = np.random.default_rng(0)
+        s = 400
+        # genuine posterior spread in team 'a' strength
+        attack = np.column_stack([rng.normal(0.5, 0.4, s), rng.normal(-0.3, 0.2, s)])
+        defence = np.column_stack([rng.normal(0.2, 0.3, s), rng.normal(0.0, 0.2, s)])
+        return _Posterior(
+            teams=("a", "b"),
+            index={"a": 0, "b": 1},
+            mu=rng.normal(0.2, 0.05, s),
+            home_adv=rng.normal(0.3, 0.05, s),
+            neutral_adv=np.zeros(s),
+            rho=np.full(s, -0.04),
+            attack=attack,
+            defence=defence,
+        )
+
+    def test_predict_equals_mean_of_per_draw_probs(self) -> None:
+        model = BayesPoissonForecaster(FAST)
+        model._post = self._posterior_with_spread()
+        fixture = Fixture("a", "b", dt.date(2026, 6, 1), neutral=True)
+        predict = np.array(model.predict(fixture))
+        per_draw_mean = model.predict_posterior(fixture, 400).mean(axis=0)
+        np.testing.assert_allclose(predict, per_draw_mean, atol=1e-12)
+
+    def test_predict_differs_from_plug_in_on_posterior_means(self) -> None:
+        from scipy.stats import poisson
+
+        model = BayesPoissonForecaster(FAST)
+        post = self._posterior_with_spread()
+        model._post = post
+        fixture = Fixture("a", "b", dt.date(2026, 6, 1), neutral=True)
+        predictive = np.array(model.predict(fixture))
+
+        # plug-in: ONE grid from the posterior-MEAN parameters
+        k = FAST.max_goals
+        lam_h = np.exp(post.mu.mean() + post.attack[:, 0].mean() - post.defence[:, 1].mean())
+        lam_a = np.exp(post.mu.mean() + post.attack[:, 1].mean() - post.defence[:, 0].mean())
+        support = np.arange(k + 1)
+        ph = poisson.pmf(support, lam_h)
+        pa = poisson.pmf(support, lam_a)
+        ph[k] = 1 - poisson.cdf(k - 1, lam_h)
+        pa[k] = 1 - poisson.cdf(k - 1, lam_a)
+        grid = np.outer(ph, pa)
+        grid[0, 0] *= 1 + lam_h * lam_a * 0.04  # rho mean -0.04
+        grid[1, 1] *= 1 + 0.04
+        grid /= grid.sum()
+        plug_in = np.array([np.tril(grid, -1).sum(), np.trace(grid), np.triu(grid, 1).sum()])
+        # the full predictive is genuinely different from the plug-in
+        assert np.abs(predictive - plug_in).max() > 1e-3
