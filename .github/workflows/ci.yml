@@ -15,7 +15,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - name: Install
-        run: uv sync --dev
+        run: uv sync --dev --extra bayes --extra gbm --extra dashboard
       - name: Lint
         run: |
           uv run ruff check src tests

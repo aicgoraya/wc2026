@@ -1,7 +1,7 @@
 .PHONY: setup test lint format typecheck check refresh dashboard
 
 setup:
-	uv sync --dev
+	uv sync --dev --extra bayes --extra gbm --extra dashboard
 
 test:
 	uv run pytest -m "not live"
@@ -26,4 +26,4 @@ refresh:
 	uv run wc2026 refresh
 
 dashboard:
-	@echo "dashboard ships in Phase 6" && exit 1
+	uv run wc2026 dashboard

@@ -17,3 +17,5 @@ dist/
 
 # os / editor
 .DS_Store
+.claude/
+results/dashboard.json

@@ -1,6 +1,6 @@
 # RESULTS - live scoreboard
 
-_Generated 2026-06-13 06:50 UTC. Lower is better on every metric; RPS is primary. `ece` = expected calibration error. CIs are 95% bootstrap._
+_Generated 2026-06-13 07:02 UTC. Lower is better on every metric; RPS is primary. `ece` = expected calibration error. CIs are 95% bootstrap._
 
 ## Track A — PRIMARY: historical walk-forward (real sample size)
 
@@ -47,10 +47,13 @@ current sample size this table is reported for transparency only -
 
 | model | n | rps | rps_ci_lo | rps_ci_hi | log_loss | brier | ece |
 |---|---|---|---|---|---|---|---|
-| elo_baseline (all completed) | 3 | 0.1635 | 0.0161 | 0.3009 | 0.9457 | 0.5999 | 0.3196 |
-| dixon_coles (all completed) | 3 | 0.1613 | 0.0826 | 0.2261 | 0.9156 | 0.5538 | 0.2644 |
+| elo_baseline (all completed) | 4 | 0.1837 | 0.0732 | 0.2726 | 0.9541 | 0.5961 | 0.2397 |
+| elo_baseline (common w/ market) | 1 | 0.2444 | 0.2444 | 0.2444 | 0.9793 | 0.5849 | 0.0000 |
+| dixon_coles (all completed) | 4 | 0.1708 | 0.1118 | 0.2133 | 0.8963 | 0.5361 | 0.2578 |
+| dixon_coles (common w/ market) | 1 | 0.1995 | 0.1995 | 0.1995 | 0.8382 | 0.4832 | 0.3783 |
+| market (matches w/ lines) | 1 | 0.1719 | 0.1719 | 0.1719 | 0.7680 | 0.4329 | 0.3574 |
 
-- Live model rows cover all 3 completed WC matches; market rows exist only where a pre-kickoff quote was stored (collection began 2026-06-12): 0 matches so far.
+- Live model rows cover all 4 completed WC matches; market rows exist only where a pre-kickoff quote was stored (collection began 2026-06-12): 1 matches so far.
 - Model-vs-market gaps are quantified on their COMMON matches as they accumulate; the baseline is expected to lose to the market - that gap is the target for Dixon-Coles and the Bayesian model.
 
 # Phase 4: Bayesian vs Dixon-Coles vs Elo
