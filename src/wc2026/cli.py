@@ -162,9 +162,42 @@ def tune_dc() -> None:
 
 
 @app.command()
-def simulate() -> None:
-    """Run the Monte-Carlo tournament simulation and print advancement probabilities."""
-    _not_yet("Phase 3")
+def simulate(n_sims: int = 50_000, top: int = 24) -> None:
+    """Monte-Carlo the rest of the World Cup and print advancement probabilities."""
+    import numpy as np
+
+    from wc2026.config import get_settings
+    from wc2026.data.store import MATCHES_DATASET, Store
+    from wc2026.models.dixon_coles import DixonColesForecaster
+    from wc2026.tournament.simulate import simulate_tournament
+
+    settings = get_settings()
+    store = Store(settings.data_root / "snapshots")
+    matches = store.read(MATCHES_DATASET, "matches")
+
+    model = DixonColesForecaster()
+    model.fit(matches, as_of=__import__("datetime").date.today())
+    rng = np.random.default_rng(settings.default_seed)
+    table = simulate_tournament(matches, model, n_sims=n_sims, rng=rng)
+
+    pct = table.copy()
+    for col in ("reach_r32", "reach_r16", "reach_qf", "reach_sf", "reach_final", "champion"):
+        pct[col] = (100 * pct[col]).round(1)
+    typer.echo(f"advancement probabilities (%), {n_sims} sims, Dixon-Coles:")
+    typer.echo(
+        pct.head(top).to_string(
+            index=False,
+            columns=[
+                "team_id",
+                "group",
+                "reach_r16",
+                "reach_qf",
+                "reach_sf",
+                "reach_final",
+                "champion",
+            ],
+        )
+    )
 
 
 @app.command()

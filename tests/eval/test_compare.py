@@ -13,7 +13,7 @@ class TestPairedBootstrap:
         rng = np.random.default_rng(0)
         loss_b = rng.uniform(0.1, 0.3, 2000)
         loss_a = loss_b - 0.02  # A always 0.02 lower (better)
-        mean, lo, hi = paired_bootstrap_delta(loss_a, loss_b, seed=1)
+        mean, _lo, hi = paired_bootstrap_delta(loss_a, loss_b, seed=1)
         assert mean == pytest.approx(-0.02, abs=1e-9)
         assert hi < 0  # CI strictly below zero
 

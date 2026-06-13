@@ -2,10 +2,10 @@
 
 Two strictly separated tracks:
 
-- PRIMARY: long historical walk-forward — real sample sizes, no market
+- PRIMARY: long historical walk-forward - real sample sizes, no market
   benchmark possible (historical odds are paywalled on the free tier).
 - LIVE: the WC 2026 scoreboard accumulating match by match, market included
-  via the closing-line proxy — small-sample by construction until the
+  via the closing-line proxy - small-sample by construction until the
   tournament progresses, and labeled as such.
 """
 
@@ -66,14 +66,14 @@ def render_results_md(
     paired_cols = ["comparison", "n", "mean_dRPS", "ci_lo", "ci_hi", "DM", "p", "verdict"]
     start, end = primary_window
     parts = [
-        "# RESULTS — live scoreboard",
+        "# RESULTS - live scoreboard",
         "",
         f"_Generated {generated_utc:%Y-%m-%d %H:%M} UTC. Lower is better on every metric;"
         " RPS is primary. `ece` = expected calibration error. CIs are 95% bootstrap._",
         "",
         "## Track A — PRIMARY: historical walk-forward (real sample size)",
         "",
-        f"All internationals, {start} → {end}; every prediction fit strictly on",
+        f"All internationals, {start} -> {end}; every prediction fit strictly on",
         "pre-cutoff matches (ratings AND the ordinal link). No market column here:",
         "historical closing odds are paywalled on the free tier, so the market is",
         "only benchmarked on the live track below.",
@@ -86,8 +86,8 @@ def render_results_md(
         "",
         "The marginal CIs above share the same matches, so they overlap even when one",
         "model is reliably better game-by-game. The honest test is the paired per-match",
-        "RPS difference: `mean_dRPS = challenger − baseline` (negative ⇒ challenger",
-        "better), with a 95% bootstrap CI over matches and a Diebold–Mariano statistic.",
+        "RPS difference: `mean_dRPS = challenger - baseline` (negative => challenger",
+        "better), with a 95% bootstrap CI over matches and a Diebold-Mariano statistic.",
         "",
         md_table(paired_rows, paired_cols) if paired_rows else "_Only one model on the board._",
         "",
@@ -100,11 +100,11 @@ def render_results_md(
         parts.extend([f"![{label}]({path})", ""])
     parts.extend(
         [
-            "## Track B — LIVE: World Cup 2026 (SMALL SAMPLE — no conclusions yet)",
+            "## Track B — LIVE: World Cup 2026 (SMALL SAMPLE - no conclusions yet)",
             "",
             "Accumulates match by match as the tournament runs. The market column is",
             "the de-vigged closing-line proxy (sharpest book; see README). With the",
-            "current sample size this table is reported for transparency only —",
+            "current sample size this table is reported for transparency only -",
             "**do not read anything into it yet.**",
             "",
             md_table(live_rows, cols) if live_rows else "_No scoreable matches yet._",

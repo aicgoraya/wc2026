@@ -1,4 +1,4 @@
-"""Orchestration of the full evaluation: walk-forward runs → RESULTS.md.
+"""Orchestration of the full evaluation: walk-forward runs -> RESULTS.md.
 
 This is the module ``wc2026 report`` runs. It reads the latest canonical
 snapshots, evaluates every registered model walk-forward, scores the market
@@ -42,7 +42,7 @@ def model_lineup() -> list[Forecaster]:
 def market_live_rows(store: Store, completed: pd.DataFrame) -> pd.DataFrame:
     """Market closing-line probabilities scored on completed WC matches.
 
-    Only matches whose first stored quote precedes kickoff get a market row —
+    Only matches whose first stored quote precedes kickoff get a market row -
     collection started 2026-06-12, so earlier matches have no closing proxy.
     """
     policy = BenchmarkPolicy()
@@ -145,7 +145,7 @@ def run_report(
         live_rows.append(scoreboard_row("market (matches w/ lines)", market_rows, seed=seed))
 
     # Paired comparison: every challenger vs the baseline (lineup[0]) on the
-    # SHARED matches, per-match RPS difference. This is the correct test —
+    # SHARED matches, per-match RPS difference. This is the correct test -
     # marginal CIs overlap even when one model is reliably better match-for-match.
     lineup = model_lineup()
     baseline = lineup[0].name
@@ -164,7 +164,7 @@ def run_report(
         )
         paired_rows.append(
             {
-                "comparison": f"{cmp.model_a} − {cmp.model_b}",
+                "comparison": f"{cmp.model_a} - {cmp.model_b}",
                 "n": cmp.n,
                 "mean_dRPS": cmp.mean_delta,
                 "ci_lo": cmp.ci_lo,
@@ -184,14 +184,14 @@ def run_report(
         " only where a pre-kickoff quote was stored (collection began 2026-06-12):"
         f" {len(market_rows)} matches so far.",
         "Model-vs-market gaps are quantified on their COMMON matches as they"
-        " accumulate; the baseline is expected to lose to the market — that gap is"
+        " accumulate; the baseline is expected to lose to the market - that gap is"
         " the target for Dixon-Coles and the Bayesian model.",
     ]
     methodology_notes = [
         f"dixon_coles: decay half-life ({DEFAULT_HALF_LIFE_DAYS:.0f}d) and L2 shrinkage"
         f" ({DEFAULT_L2}) selected JOINTLY by walk-forward RPS on an inner 2004-2009"
         " validation window (training always pre-cutoff), frozen and committed before"
-        " the 2010+ test window was evaluated — full table in results/dc_tuning.md;"
+        " the 2010+ test window was evaluated - full table in results/dc_tuning.md;"
         " rho and the neutral listed-home coefficient fitted by MLE."
         " Reproduce with `wc2026 tune-dc`.",
     ]
