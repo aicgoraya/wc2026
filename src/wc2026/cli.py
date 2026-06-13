@@ -286,6 +286,23 @@ def model_compare() -> None:
         f"**Blend beats the best single model on the held-out window: "
         f"{'yes' if e.blend_beats_best_single else 'no'}.**",
         "",
+        "## Ensemble robustness — rolling weights, walk-forward",
+        "",
+        f"Weights refit every {cmp.cadence_days}d on expanding pre-cutoff data, applied to the"
+        f" next block; predictions aggregated out-of-sample (n={cmp.rolling_ensemble.n_oos}).",
+        "",
+        md_table(rows(cmp.rolling_ensemble.scoreboard), ["model", "rps"]),
+        "",
+        md_table(
+            rows(cmp.rolling_ensemble.paired),
+            ["comparison", "n", "mean_dRPS", "ci_lo", "ci_hi", "p", "verdict"],
+        ),
+        "",
+        "Per-year blend-minus-DC mean ΔRPS (negative => blend better; shows the edge is"
+        " spread across windows, not concentrated):",
+        "",
+        md_table(rows(cmp.rolling_ensemble.per_period), ["year", "mean_dRPS", "n"]),
+        "",
     ]
     out = Path("results/model_comparison.md")
     out.write_text("\n".join(lines))

@@ -20,7 +20,12 @@ from pathlib import Path
 import pandas as pd
 
 from wc2026.eval.compare import compare
-from wc2026.eval.ensemble import EnsembleResult, evaluate_ensemble
+from wc2026.eval.ensemble import (
+    EnsembleResult,
+    WalkForwardEnsembleResult,
+    evaluate_ensemble,
+    walk_forward_ensemble,
+)
 from wc2026.eval.report import scoreboard_row
 from wc2026.eval.walkforward import RefitSchedule, walk_forward
 from wc2026.models.base import Forecaster
@@ -41,6 +46,7 @@ class ModelComparison:
     scoreboard: pd.DataFrame
     paired: pd.DataFrame
     ensemble: EnsembleResult
+    rolling_ensemble: WalkForwardEnsembleResult
     window: tuple[dt.date, dt.date]
     cadence_days: int
 
@@ -109,4 +115,7 @@ def run_model_comparison(
         )
 
     ensemble = evaluate_ensemble(rows, split_date, seed=seed)
-    return ModelComparison(scoreboard, pd.DataFrame(paired_rows), ensemble, window, cadence_days)
+    rolling = walk_forward_ensemble(rows, cadence_days=cadence_days, min_train=2000, seed=seed)
+    return ModelComparison(
+        scoreboard, pd.DataFrame(paired_rows), ensemble, rolling, window, cadence_days
+    )

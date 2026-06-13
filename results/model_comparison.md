@@ -39,3 +39,34 @@ Weights fit on matches before 2022-06-01 (n=3854), blend evaluated on matches af
 | blend - gbm | 4253 | -0.0040 | -0.0055 | -0.0025 | 0.0000 | blend better (p=1.4e-07) |
 
 **Blend beats the best single model on the held-out window: yes.**
+
+## Ensemble robustness — rolling weights, walk-forward
+
+Weights refit every 180d on expanding pre-cutoff data, applied to the next block; predictions aggregated out-of-sample (n=6022).
+
+| model | rps |
+|---|---|
+| blend | 0.1655 |
+| dixon_coles | 0.1665 |
+| bayes_poisson | 0.1686 |
+| gbm | 0.1695 |
+| elo_baseline | 0.1702 |
+
+| comparison | n | mean_dRPS | ci_lo | ci_hi | p | verdict |
+|---|---|---|---|---|---|---|
+| blend - elo_baseline | 6022 | -0.0047 | -0.0059 | -0.0035 | 0.0000 | blend better (p=4.1e-14) |
+| blend - dixon_coles | 6022 | -0.0010 | -0.0016 | -0.0003 | 0.0021 | blend better (p=2.1e-03) |
+| blend - bayes_poisson | 6022 | -0.0031 | -0.0038 | -0.0024 | 0.0000 | blend better (p=1.8e-16) |
+| blend - gbm | 6022 | -0.0039 | -0.0052 | -0.0027 | 0.0000 | blend better (p=2.8e-10) |
+
+Per-year blend-minus-DC mean ΔRPS (negative => blend better; shows the edge is spread across windows, not concentrated):
+
+| year | mean_dRPS | n |
+|---|---|---|
+| 2020 | 0.0003 | 340 |
+| 2021 | -0.0008 | 1115 |
+| 2022 | -0.0008 | 970 |
+| 2023 | -0.0022 | 1054 |
+| 2024 | -0.0001 | 1231 |
+| 2025 | -0.0016 | 1002 |
+| 2026 | -0.0002 | 310 |
