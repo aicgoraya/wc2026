@@ -162,28 +162,105 @@ def tune_dc() -> None:
 
 
 @app.command()
-def simulate(n_sims: int = 50_000, top: int = 24) -> None:
-    """Monte-Carlo the rest of the World Cup and print advancement probabilities."""
+def bayes_compare() -> None:
+    """Walk-forward Bayes vs Dixon-Coles vs Elo on the shared recent window (slow: MCMC)."""
+    import time
+    from pathlib import Path
+
+    from wc2026.config import get_settings
+    from wc2026.data.store import MATCHES_DATASET, Store
+    from wc2026.eval.report import md_table
+    from wc2026.pipeline.bayes_eval import run_bayes_comparison
+
+    settings = get_settings()
+    matches = Store(settings.data_root / "snapshots").read(MATCHES_DATASET, "matches")
+    t0 = time.time()
+    cmp = run_bayes_comparison(
+        matches, seed=settings.default_seed, cache_dir=settings.data_root / "bayes_cache"
+    )
+    runtime = time.time() - t0
+
+    def to_rows(frame: object) -> list[dict[str, object]]:
+        return [{str(k): v for k, v in row.items()} for row in frame.to_dict("records")]  # type: ignore[attr-defined]
+
+    score_cols = ["model", "n", "rps", "rps_ci_lo", "rps_ci_hi", "log_loss", "brier", "ece"]
+    paired_cols = ["comparison", "n", "mean_dRPS", "ci_lo", "ci_hi", "DM", "p", "verdict"]
+    split_cols = ["tercile", "mean", "count"]
+    lines = [
+        "# Phase 4: Bayesian vs Dixon-Coles vs Elo",
+        "",
+        f"Walk-forward {cmp.window[0]} -> {cmp.window[1]}, refit every {cmp.cadence_days}d"
+        f" (MCMC cost: {runtime / 60:.0f} min for the Bayesian refits; DC/Elo negligible).",
+        "All three scored on the SAME matches at the SAME cadence so the paired test"
+        " isolates the model, not the schedule.",
+        "",
+        "## Scoreboard (shared window)",
+        "",
+        md_table(to_rows(cmp.scoreboard), score_cols),
+        "",
+        "## Paired significance (per-match ΔRPS)",
+        "",
+        md_table(to_rows(cmp.paired), paired_cols),
+        "",
+        "## Headline test: does partial pooling help most on sparse teams?",
+        "",
+        "Mean ΔRPS (bayes - dixon_coles) by the decayed match-count of the weaker side"
+        " of each game (negative => Bayes better):",
+        "",
+        md_table(to_rows(cmp.sparse_split), split_cols),
+        "",
+    ]
+    out = Path("results/bayes_comparison.md")
+    out.write_text("\n".join(lines))
+    typer.echo("\n".join(lines))
+    typer.echo(f"written to {out}")
+
+
+@app.command()
+def simulate(n_sims: int = 50_000, top: int = 24, model: str = "dixon_coles") -> None:
+    """Monte-Carlo the rest of the World Cup and print advancement probabilities.
+
+    ``model`` is ``dixon_coles`` (default, fast) or ``bayes_poisson`` (an MCMC
+    fit first, then the same simulator).
+    """
+    import datetime as dt
+
     import numpy as np
 
     from wc2026.config import get_settings
     from wc2026.data.store import MATCHES_DATASET, Store
-    from wc2026.models.dixon_coles import DixonColesForecaster
     from wc2026.tournament.simulate import simulate_tournament
 
     settings = get_settings()
     store = Store(settings.data_root / "snapshots")
     matches = store.read(MATCHES_DATASET, "matches")
 
-    model = DixonColesForecaster()
-    model.fit(matches, as_of=__import__("datetime").date.today())
+    if model == "bayes_poisson":
+        from wc2026.models.bayes_poisson import BayesPoissonForecaster
+
+        forecaster: object = BayesPoissonForecaster()
+    elif model == "dixon_coles":
+        from wc2026.models.dixon_coles import DixonColesForecaster
+
+        forecaster = DixonColesForecaster()
+    else:
+        typer.secho(f"unknown model {model!r}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+
+    forecaster.fit(matches, as_of=dt.date.today())  # type: ignore[attr-defined]
+    if model == "bayes_poisson":
+        d = forecaster.diagnostics  # type: ignore[attr-defined]
+        typer.echo(
+            f"bayes fit: R-hat {d.max_rhat:.4f}, min ESS {d.min_ess_bulk:.0f},"
+            f" {d.divergences} divergences, converged={d.converged}"
+        )
     rng = np.random.default_rng(settings.default_seed)
-    table = simulate_tournament(matches, model, n_sims=n_sims, rng=rng)
+    table = simulate_tournament(matches, forecaster, n_sims=n_sims, rng=rng)  # type: ignore[arg-type]
 
     pct = table.copy()
     for col in ("reach_r32", "reach_r16", "reach_qf", "reach_sf", "reach_final", "champion"):
         pct[col] = (100 * pct[col]).round(1)
-    typer.echo(f"advancement probabilities (%), {n_sims} sims, Dixon-Coles:")
+    typer.echo(f"advancement probabilities (%), {n_sims} sims, {model}:")
     typer.echo(
         pct.head(top).to_string(
             index=False,

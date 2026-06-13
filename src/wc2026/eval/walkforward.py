@@ -83,6 +83,8 @@ def walk_forward(
             {
                 "match_id": match_id,
                 "date": date,
+                "home_id": home_id,
+                "away_id": away_id,
                 "tournament": tournament,
                 "neutral": neutral,
                 "model": model.name,
