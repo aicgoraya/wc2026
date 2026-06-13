@@ -19,6 +19,7 @@ Requires the ``gbm`` extra (``uv sync --extra gbm``).
 """
 
 import datetime as dt
+import warnings
 from typing import Any, cast
 
 import numpy as np
@@ -70,7 +71,9 @@ class GbmForecaster:
         ]
         if len(train) < 500:
             raise ValueError(f"need at least 500 labelled rows to fit, got {len(train)}")
-        x = train[list(FEATURE_COLUMNS)].to_numpy(dtype=np.float64)
+        # fit on a bare ndarray (no feature names) so predict on ndarrays is silent;
+        # feature_importances_ stay positional and map back to FEATURE_COLUMNS by index
+        x = np.ascontiguousarray(train[list(FEATURE_COLUMNS)].to_numpy(dtype=np.float64))
         y = train["label"].to_numpy(dtype=np.int64)
         self._model = LGBMClassifier(**self._params)
         self._model.fit(x, y)
@@ -89,7 +92,11 @@ class GbmForecaster:
         """Predicted class probabilities (home, draw, away) for the fixture."""
         if self._model is None:
             raise RuntimeError("call fit() before predict()")
-        proba = self._model.predict_proba(self._features(fixture).reshape(1, -1))[0]
+        with warnings.catch_warnings():
+            # LightGBM's sklearn wrapper records default feature names internally;
+            # predicting on a bare ndarray is correct but warns. Harmless, silence it.
+            warnings.filterwarnings("ignore", message="X does not have valid feature names")
+            proba = self._model.predict_proba(self._features(fixture).reshape(1, -1))[0]
         return OutcomeProbs(float(proba[0]), float(proba[1]), float(proba[2])).validated()
 
     def feature_importances(self) -> dict[str, float]:

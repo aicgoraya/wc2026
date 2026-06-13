@@ -199,9 +199,10 @@ def run_report(
     # Embed the Phase 4 Bayesian comparison if it has been generated
     # (by `wc2026 bayes-compare`); never re-runs the expensive MCMC here.
     extra_sections: list[str] = []
-    bayes_md = plots_dir / "bayes_comparison.md"
-    if bayes_md.exists():
-        extra_sections.append(bayes_md.read_text().strip())
+    for fname in ("bayes_comparison.md", "model_comparison.md"):
+        path = plots_dir / fname
+        if path.exists():
+            extra_sections.append(path.read_text().strip())
 
     markdown = render_results_md(
         generated_utc=dt.datetime.now(dt.UTC),

@@ -236,6 +236,64 @@ def bayes_compare() -> None:
 
 
 @app.command()
+def model_compare() -> None:
+    """Four-model paired board (Elo/DC/Bayes/GBM) + leak-free ensemble; writes results."""
+    from pathlib import Path
+
+    from wc2026.config import get_settings
+    from wc2026.data.store import MATCHES_DATASET, Store
+    from wc2026.eval.report import md_table
+    from wc2026.pipeline.ensemble_eval import run_model_comparison
+
+    settings = get_settings()
+    matches = Store(settings.data_root / "snapshots").read(MATCHES_DATASET, "matches")
+    cmp = run_model_comparison(
+        matches, seed=settings.default_seed, cache_dir=settings.data_root / "bayes_cache"
+    )
+
+    def rows(frame: object) -> list[dict[str, object]]:
+        return [{str(k): v for k, v in r.items()} for r in frame.to_dict("records")]  # type: ignore[attr-defined]
+
+    e = cmp.ensemble
+    weights_str = ", ".join(f"{k} {v:.2f}" for k, v in e.weights.items())
+    lines = [
+        "# Phase 5: GBM + ensemble vs the generative ladder",
+        "",
+        f"Walk-forward {cmp.window[0]} -> {cmp.window[1]}, {cmp.cadence_days}d cadence,"
+        " same matches for all four models.",
+        "",
+        "## Scoreboard (shared window)",
+        "",
+        md_table(rows(cmp.scoreboard), ["model", "n", "rps", "log_loss", "brier", "ece"]),
+        "",
+        "## Paired vs Dixon-Coles (per-match ΔRPS)",
+        "",
+        md_table(
+            rows(cmp.paired), ["comparison", "n", "mean_dRPS", "ci_lo", "ci_hi", "p", "verdict"]
+        ),
+        "",
+        "## Ensemble — leak-free time-split convex blend",
+        "",
+        f"Weights fit on matches before {e.split_date} (n={e.n_train}), blend evaluated on"
+        f" matches after (n={e.n_test}). Optimal weights: {weights_str}.",
+        "",
+        md_table(rows(e.scoreboard), ["model", "rps"]),
+        "",
+        md_table(
+            rows(e.paired), ["comparison", "n", "mean_dRPS", "ci_lo", "ci_hi", "p", "verdict"]
+        ),
+        "",
+        f"**Blend beats the best single model on the held-out window: "
+        f"{'yes' if e.blend_beats_best_single else 'no'}.**",
+        "",
+    ]
+    out = Path("results/model_comparison.md")
+    out.write_text("\n".join(lines))
+    typer.echo("\n".join(lines))
+    typer.echo(f"written to {out}")
+
+
+@app.command()
 def simulate(n_sims: int = 50_000, top: int = 24, model: str = "dixon_coles") -> None:
     """Monte-Carlo the rest of the World Cup and print advancement probabilities.
 
