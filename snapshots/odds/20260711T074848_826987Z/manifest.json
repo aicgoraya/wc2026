@@ -1,0 +1,18 @@
+{
+  "dataset": "odds",
+  "snapshot_id": "20260711T074848_826987Z",
+  "created_utc": "2026-07-11T07:48:48.826987+00:00",
+  "meta": {
+    "source": "odds_api",
+    "sport_key": "soccer_fifa_world_cup",
+    "raw_path": "data/raw/odds_api/20260711T074848_819767Z.json",
+    "fetched_at_utc": "2026-07-11T07:48:48.819767+00:00",
+    "url": "https://api.the-odds-api.com/v4/sports/soccer_fifa_world_cup/odds",
+    "x-requests-remaining": "422",
+    "x-requests-used": "78",
+    "x-requests-last": "2"
+  },
+  "frames": {
+    "quotes": 125
+  }
+}
