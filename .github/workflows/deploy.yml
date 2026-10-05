@@ -1,0 +1,214 @@
+# Manual deployment of the prediction service to ECS Fargate.
+#
+# Run it from the Actions tab on `main`. It (1) re-runs CI on the exact commit,
+# (2) builds the image and smoke-tests THAT image, (3) pushes it to ECR under
+# the immutable tag <commit sha>, (4) registers a task-definition revision that
+# references the image by digest, (5) updates the service and waits for it to
+# stabilise, (6) smoke-checks the public endpoint, and (7) on any failure after
+# the service was updated, points the service back at the previous task
+# definition.
+#
+# AWS access is by GitHub OIDC only (no stored keys). The role can be assumed
+# only by jobs in the `production` environment of this repository; add required
+# reviewers to that environment to gate deployments.
+#
+# Environment variables to set on the `production` environment (all are CDK
+# stack outputs - see README "Deploying"):
+#   AWS_REGION, AWS_DEPLOY_ROLE_ARN, ECR_REPOSITORY, ECS_CLUSTER, ECS_SERVICE, SERVICE_URL
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_version:
+        description: "Model artifact version to pin (blank = keep the version currently deployed)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false # never interrupt a rollout; queue the next one
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  deploy:
+    name: build, push, roll out, verify
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS; nothing else is granted
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      SERVICE_URL: ${{ vars.SERVICE_URL }}
+      ARTIFACT_VERSION: ${{ inputs.artifact_version }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - name: Validate configuration
+        run: |
+          missing=0
+          for name in AWS_REGION ECR_REPOSITORY ECS_CLUSTER ECS_SERVICE SERVICE_URL; do
+            if [ -z "${!name}" ]; then echo "::error::environment variable $name is not set"; missing=1; fi
+          done
+          if [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ]; then echo "::error::AWS_DEPLOY_ROLE_ARN is not set"; missing=1; fi
+          if [ -n "$ARTIFACT_VERSION" ] && ! [[ "$ARTIFACT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo "::error::artifact_version has invalid characters"; missing=1
+          fi
+          exit $missing
+
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build image
+        run: docker build --platform linux/amd64 -t "candidate:$IMAGE_TAG" .
+
+      - name: Smoke-test this exact image (synthetic artifact, no AWS)
+        run: |
+          uv sync --frozen --no-dev --extra gbm --extra serve
+          uv run --no-sync wc2026 export-artifact --synthetic --version ci-fixture --out "$RUNNER_TEMP/artifacts"
+          docker run -d --name candidate -p 8080:8080 \
+            -v "$RUNNER_TEMP/artifacts/ci-fixture:/artifact:ro" \
+            -e WC2026_ARTIFACT_DIR=/artifact \
+            "candidate:$IMAGE_TAG"
+          python3 tools/smoke.py http://127.0.0.1:8080 --expect-version ci-fixture --wait 60 \
+            || { docker logs candidate; exit 1; }
+          docker rm -f candidate
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: wc2026-deploy-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image (immutable commit tag) and resolve its digest
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          remote="$REGISTRY/$ECR_REPOSITORY"
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "Tag $IMAGE_TAG already exists in ECR (re-run of this commit); reusing it."
+          else
+            docker tag "candidate:$IMAGE_TAG" "$remote:$IMAGE_TAG"
+            docker push "$remote:$IMAGE_TAG"
+          fi
+          digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=$IMAGE_TAG" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          case "$digest" in sha256:*) ;; *) echo "::error::could not resolve image digest"; exit 1 ;; esac
+          echo "ref=$remote@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record the current (known-good) task definition
+        id: previous
+        run: |
+          read -r arn count < <(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].[taskDefinition, desiredCount]' --output text)
+          case "$arn" in arn:aws*:ecs:*) ;; *) echo "::error::service $ECS_SERVICE not found in $ECS_CLUSTER"; exit 1 ;; esac
+          echo "arn=$arn" >> "$GITHUB_OUTPUT"
+          echo "desired_count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Register the new task definition revision
+        id: taskdef
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          PREVIOUS: ${{ steps.previous.outputs.arn }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$PREVIOUS" --query taskDefinition > previous.json
+          jq --arg image "$IMAGE_REF" --arg version "$ARTIFACT_VERSION" '
+              .containerDefinitions[0].image = $image
+            | if $version != "" then
+                .containerDefinitions[0].environment |= map(
+                  if .name == "WC2026_ARTIFACT_VERSION" then .value = $version else . end)
+              else . end
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                  .registeredAt, .registeredBy, .deregisteredAt)
+          ' previous.json > next.json
+          arn=$(aws ecs register-task-definition --cli-input-json file://next.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$arn" >> "$GITHUB_OUTPUT"
+          version=$(jq -r '.containerDefinitions[0].environment[] | select(.name == "WC2026_ARTIFACT_VERSION") | .value' next.json)
+          echo "artifact_version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Update the service
+        id: update
+        env:
+          TASK_DEFINITION: ${{ steps.taskdef.outputs.arn }}
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION" --desired-count 1 >/dev/null
+
+      - name: Wait for the rollout (bounded)
+        env:
+          TASK_DEFINITION: ${{ steps.taskdef.outputs.arn }}
+        run: |
+          # `services-stable` polls every 15s for up to 10 minutes
+          timeout 900 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          # "stable" is also what an ECS circuit-breaker rollback looks like, so
+          # confirm the service is stable ON THE NEW revision.
+          running=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].deployments[?status==`PRIMARY`] | [0].[taskDefinition, rolloutState]' --output text)
+          echo "primary deployment: $running"
+          if [ "$running" != "$TASK_DEFINITION"$'\t'"COMPLETED" ]; then
+            echo "::error::rollout did not complete on $TASK_DEFINITION (ECS may have rolled it back)"
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query 'services[0].events[:8].message' --output text
+            exit 1
+          fi
+
+      - name: Post-deployment smoke checks
+        env:
+          EXPECTED: ${{ steps.taskdef.outputs.artifact_version }}
+        run: python3 tools/smoke.py "$SERVICE_URL" --expect-version "$EXPECTED" --require-real --wait 120
+
+      - name: Roll back to the previous task definition
+        if: failure() && steps.update.outcome == 'success'
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.arn }}
+          PREVIOUS_COUNT: ${{ steps.previous.outputs.desired_count }}
+        run: |
+          # Restores the previous revision AND its task count, so a failed first
+          # deployment returns to zero tasks instead of retrying a placeholder image.
+          echo "::warning::deployment failed after the service was updated; restoring $PREVIOUS"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$PREVIOUS" --desired-count "$PREVIOUS_COUNT" >/dev/null
+          timeout 900 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "Rolled back to \`$PREVIOUS\`." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summary
+        if: always()
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          TASK_DEFINITION: ${{ steps.taskdef.outputs.arn }}
+          PREVIOUS: ${{ steps.previous.outputs.arn }}
+          EXPECTED: ${{ steps.taskdef.outputs.artifact_version }}
+        run: |
+          {
+            echo "### Deployment: ${{ job.status }}"
+            echo "- commit: \`$GITHUB_SHA\`"
+            echo "- image: \`${IMAGE_REF:-not pushed}\`"
+            echo "- task definition: \`${TASK_DEFINITION:-not registered}\`"
+            echo "- model artifact: \`${EXPECTED:-unknown}\`"
+            echo "- previous task definition (rollback target): \`${PREVIOUS:-unknown}\`"
+            echo "- endpoint: $SERVICE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

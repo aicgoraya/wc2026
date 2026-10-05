@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "synthetic": false,
+  "generated_utc": "2026-10-05T22:59:58+00:00",
+  "metric": "rps",
+  "metric_note": "Ranked Probability Score, mean per match; lower is better.",
+  "seed": 20260611,
+  "excluded_models": {
+    "bayes_poisson": "not in the served blend (fitted weight 0); MCMC refits take hours. See results/bayes_comparison.md."
+  },
+  "historical": {
+    "description": "Walk-forward evaluation on all international matches in the window. Every prediction comes from a model refit only on matches strictly before its refit cutoff.",
+    "window": {
+      "start": "2018-01-01",
+      "end": "2026-06-10"
+    },
+    "refit_cadence_days": 180,
+    "baseline": null,
+    "baseline_note": "No market baseline on this track: closing odds were not collected for these matches. elo_baseline is a simple model reference, not a market line.",
+    "models": [
+      {
+        "model": "elo_baseline",
+        "n": 8116,
+        "rps": 0.17124060667272029,
+        "rps_ci_lo": 0.1678271684151414,
+        "rps_ci_hi": 0.17468550423103407,
+        "log_loss": 0.8751178919734456,
+        "brier": 0.5146288431978806,
+        "ece": 0.009631832567002277
+      },
+      {
+        "model": "dixon_coles",
+        "n": 8116,
+        "rps": 0.16748570707829769,
+        "rps_ci_lo": 0.16422080514370727,
+        "rps_ci_hi": 0.17077809332751953,
+        "log_loss": 0.8613015654488986,
+        "brier": 0.5047969407042607,
+        "ece": 0.010549298515728152
+      },
+      {
+        "model": "gbm",
+        "n": 8116,
+        "rps": 0.1704532076264675,
+        "rps_ci_lo": 0.16696776660905607,
+        "rps_ci_hi": 0.1739232790017477,
+        "log_loss": 0.8729454241249304,
+        "brier": 0.513172014852456,
+        "ece": 0.011588663454215966
+      }
+    ],
+    "blend": {
+      "method": "Convex blend of the three models; weights refit every 180 days on expanding, strictly earlier out-of-sample predictions (at least 2000) and applied to the next block.",
+      "n": 6031,
+      "scoreboard": [
+        {
+          "model": "blend",
+          "rps": 0.1655036216784823
+        },
+        {
+          "model": "dixon_coles",
+          "rps": 0.16653565755266145
+        },
+        {
+          "model": "gbm",
+          "rps": 0.16937930530356926
+        },
+        {
+          "model": "elo_baseline",
+          "rps": 0.17020843258969093
+        }
+      ],
+      "paired": [
+        {
+          "comparison": "blend - elo_baseline",
+          "n": 6031,
+          "mean_dRPS": -0.00470481091120866,
+          "ci_lo": -0.005900971323215052,
+          "ci_hi": -0.003445386682962353,
+          "p": 5.5567131476741054e-14,
+          "verdict": "blend better (p=5.6e-14)"
+        },
+        {
+          "comparison": "blend - dixon_coles",
+          "n": 6031,
+          "mean_dRPS": -0.001032035874179178,
+          "ci_lo": -0.0016619597172843812,
+          "ci_hi": -0.0004190897646510876,
+          "p": 0.0010834341204191353,
+          "verdict": "blend better (p=1.1e-03)"
+        },
+        {
+          "comparison": "blend - gbm",
+          "n": 6031,
+          "mean_dRPS": -0.0038756836250869757,
+          "ci_lo": -0.005077373084886065,
+          "ci_hi": -0.0026407216853759166,
+          "p": 5.704433250312917e-10,
+          "verdict": "blend better (p=5.7e-10)"
+        }
+      ],
+      "last_fitted_weights": {
+        "elo_baseline": 0.0,
+        "dixon_coles": 0.6811902708187204,
+        "gbm": 0.31880972918127964
+      }
+    }
+  },
+  "market": {
+    "description": "FIFA World Cup 2026 matches with a stored pre-kickoff odds quote. Model predictions are walk-forward (refit daily, strictly before each match).",
+    "baseline": "market",
+    "baseline_definition": "De-vigged (proportional) 1X2 closing-line proxy: the last odds snapshot stored before kickoff, from the preferred sharp book when present (pinnacle), else the mean of the sharp set, else the 5 lowest-margin books.",
+    "caveats": [
+      "Odds were snapshotted every 6 hours, so the proxy can trail the true closing line by up to ~6 hours.",
+      "One tournament; the sample is small. See n and the confidence intervals."
+    ],
+    "available": true,
+    "window": {
+      "start": "2026-06-11",
+      "end": "2026-07-19"
+    },
+    "n": 101,
+    "n_tournament_matches": 104,
+    "coverage_note": "Matches without a stored pre-kickoff quote are excluded (odds collection began on 2026-06-12, after the opening matches).",
+    "blend_weights": {
+      "dixon_coles": 0.67,
+      "gbm": 0.33
+    },
+    "blend_note": "Fixed production weights, frozen on 2026-06-13 from pre-tournament data.",
+    "scoreboard": [
+      {
+        "model": "market",
+        "kind": "market_baseline",
+        "n": 101,
+        "rps": 0.15005821667420854,
+        "rps_ci_lo": 0.12633464363626007,
+        "rps_ci_hi": 0.17508663827873963,
+        "log_loss": 0.8406895112746301
+      },
+      {
+        "model": "blend",
+        "kind": "model",
+        "n": 101,
+        "rps": 0.1559249422328006,
+        "rps_ci_lo": 0.13598349354714365,
+        "rps_ci_hi": 0.17664614591594524,
+        "log_loss": 0.866203258516111
+      },
+      {
+        "model": "dixon_coles",
+        "kind": "model",
+        "n": 101,
+        "rps": 0.15674871557295908,
+        "rps_ci_lo": 0.13713862437136204,
+        "rps_ci_hi": 0.17722365040216348,
+        "log_loss": 0.8674433387439845
+      },
+      {
+        "model": "gbm",
+        "kind": "model",
+        "n": 101,
+        "rps": 0.16015485907172153,
+        "rps_ci_lo": 0.13658567911581415,
+        "rps_ci_hi": 0.18529781104260726,
+        "log_loss": 0.8828523454807984
+      },
+      {
+        "model": "elo_baseline",
+        "kind": "model",
+        "n": 101,
+        "rps": 0.16510352936798178,
+        "rps_ci_lo": 0.14120306197793892,
+        "rps_ci_hi": 0.19024961069530769,
+        "log_loss": 0.9034949358752095
+      }
+    ],
+    "paired_vs_market": [
+      {
+        "comparison": "blend - market",
+        "n": 101,
+        "mean_dRPS": 0.005866725558592033,
+        "ci_lo": -0.004490159013033584,
+        "ci_hi": 0.01563683109378062,
+        "p": 0.25695783808660577,
+        "verdict": "no significant difference"
+      },
+      {
+        "comparison": "dixon_coles - market",
+        "n": 101,
+        "mean_dRPS": 0.006690498898750537,
+        "ci_lo": -0.005304789374590676,
+        "ci_hi": 0.01806100510658131,
+        "p": 0.2659160609595643,
+        "verdict": "no significant difference"
+      },
+      {
+        "comparison": "gbm - market",
+        "n": 101,
+        "mean_dRPS": 0.010096642397512939,
+        "ci_lo": -0.0019162362932300476,
+        "ci_hi": 0.02287747323310566,
+        "p": 0.1124931251503082,
+        "verdict": "no significant difference"
+      },
+      {
+        "comparison": "elo_baseline - market",
+        "n": 101,
+        "mean_dRPS": 0.01504531269377322,
+        "ci_lo": 0.002165988601828335,
+        "ci_hi": 0.02872290284198592,
+        "p": 0.025999336227347822,
+        "verdict": "market better"
+      }
+    ],
+    "sign_convention": "mean_dRPS = model - market; negative means the model scored better."
+  }
+}

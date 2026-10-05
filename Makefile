@@ -1,7 +1,7 @@
-.PHONY: setup test lint format typecheck check refresh dashboard
+.PHONY: setup test test-live lint format typecheck check refresh dashboard fixture-artifact serve smoke infra-synth
 
 setup:
-	uv sync --dev --extra bayes --extra gbm --extra dashboard
+	uv sync --dev --group infra --extra bayes --extra gbm --extra dashboard --extra serve
 
 test:
 	uv run pytest -m "not live"
@@ -27,3 +27,19 @@ refresh:
 
 dashboard:
 	uv run wc2026 dashboard
+
+# --- prediction service -----------------------------------------------------
+# Synthetic TEST artifact (invented teams) for trying the API without any data.
+fixture-artifact:
+	uv run wc2026 export-artifact --synthetic --version synthetic-fixture --out artifacts
+
+# Serve a local bundle: make serve ARTIFACT=artifacts/<version>
+ARTIFACT ?= artifacts/synthetic-fixture
+serve:
+	WC2026_ARTIFACT_SOURCE=local WC2026_ARTIFACT_DIR=$(ARTIFACT) uv run wc2026 serve --port 8080
+
+smoke:
+	python3 tools/smoke.py http://127.0.0.1:8080
+
+infra-synth:
+	cd infra && uv run --group infra npx --yes aws-cdk@2.1144.0 synth --quiet -c artifact_version=local

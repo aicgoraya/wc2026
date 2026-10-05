@@ -74,6 +74,95 @@ def dashboard(host: str = "127.0.0.1", port: int = 8000) -> None:
 
 
 @app.command()
+def export_artifact(
+    version: str = typer.Option(..., help="Immutable artifact version, e.g. 2026-10-05.1"),
+    out: str = typer.Option("artifacts", help="Root directory; the bundle goes in <out>/<version>"),
+    cutoff: str = typer.Option(
+        "", help="Training cutoff YYYY-MM-DD (default: day after last result)"
+    ),
+    horizon_days: int = typer.Option(180, help="Days past the cutoff the service will predict"),
+    evaluation: bool = typer.Option(True, help="Run the walk-forward evaluation (minutes)"),
+    synthetic: bool = typer.Option(
+        False, help="Write the synthetic TEST fixture instead (no data)"
+    ),
+) -> None:
+    """Train the serving models offline and write a model artifact bundle."""
+    import datetime as dt
+    from pathlib import Path
+
+    if synthetic:
+        from wc2026.serving.fixture import build_synthetic_bundle
+
+        bundle_dir = Path(out) / version
+        manifest = build_synthetic_bundle(bundle_dir, version=version, with_evaluation=evaluation)
+        typer.secho(
+            f"SYNTHETIC test artifact {manifest.artifact_version} -> {bundle_dir}", fg="yellow"
+        )
+        return
+
+    from wc2026.config import get_settings
+    from wc2026.pipeline.export import export_artifact as run_export
+
+    settings = get_settings()
+    manifest, bundle_dir = run_export(
+        settings.data_root,
+        Path(out),
+        version=version,
+        seed=settings.default_seed,
+        cutoff=dt.date.fromisoformat(cutoff) if cutoff else None,
+        horizon_days=horizon_days,
+        with_evaluation=evaluation,
+    )
+    typer.echo(
+        f"artifact {manifest.artifact_version} -> {bundle_dir}"
+        f" (cutoff {manifest.training_cutoff}, predicts through {manifest.max_prediction_date},"
+        f" {manifest.training_data['n_finished_matches_before_cutoff']} training matches)"
+    )
+
+
+@app.command()
+def upload_artifact(
+    bundle: str = typer.Option(..., help="Local bundle directory (contains manifest.json)"),
+    bucket: str = typer.Option(..., help="Destination S3 bucket"),
+    prefix: str = typer.Option("artifacts", help="Key prefix; files go to <prefix>/<version>/"),
+) -> None:
+    """Validate a bundle and upload it to its versioned S3 prefix (never overwrites)."""
+    from pathlib import Path
+
+    from wc2026.serving import s3
+    from wc2026.serving.artifacts import ArtifactError
+
+    try:
+        manifest, uri = s3.upload_bundle(
+            s3.make_client(), Path(bundle), bucket=bucket, prefix=prefix
+        )
+    except ArtifactError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    if manifest.synthetic:
+        typer.secho("warning: this is a SYNTHETIC test artifact", fg=typer.colors.YELLOW, err=True)
+    typer.echo(f"uploaded {manifest.artifact_version} ({len(manifest.files) + 1} files) -> {uri}")
+
+
+@app.command()
+def serve(host: str = "127.0.0.1", port: int = 8080) -> None:
+    """Run the prediction API (artifact chosen by the WC2026_ARTIFACT_* variables)."""
+    import uvicorn
+
+    uvicorn.run(
+        "wc2026.serving.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        workers=1,
+        access_log=False,  # one structured line per request comes from our middleware
+        log_config=None,
+        timeout_keep_alive=75,  # longer than the load balancer's 60s idle timeout
+        timeout_graceful_shutdown=20,  # shorter than the ECS stop timeout
+    )
+
+
+@app.command()
 def predict(days: int = 7) -> None:
     """Print model-vs-market probabilities for upcoming WC matches."""
     import datetime as dt

@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "artifact_version": "2026-10-05.1",
+  "created_utc": "2026-10-05T23:06:32.795981Z",
+  "synthetic": false,
+  "training_cutoff": "2026-08-27",
+  "max_prediction_date": "2027-02-23",
+  "feature_schema_version": "1",
+  "feature_columns": [
+    "elo_diff",
+    "elo_momentum_diff",
+    "form_diff",
+    "gf_diff",
+    "ga_diff",
+    "rest_diff",
+    "log_experience_diff",
+    "comp_weight",
+    "is_home"
+  ],
+  "blend_weights": {
+    "dixon_coles": 0.67,
+    "gbm": 0.33
+  },
+  "dixon_coles": {
+    "half_life_days": 1460.0,
+    "l2": 0.25,
+    "max_goals": 10.0,
+    "train_window_years": 25.0
+  },
+  "gbm_params": {
+    "objective": "multiclass",
+    "num_class": 3,
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "min_child_samples": 50,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "verbose": -1
+  },
+  "training_data": {
+    "matches_snapshot": "20261005T223456_680295Z",
+    "sources": "martj42/international_results (history) + football-data.org (WC 2026)",
+    "n_finished_matches_before_cutoff": 49546,
+    "last_match_date": "2026-08-26"
+  },
+  "runtime": {
+    "python": "3.12.3",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "lightgbm": "4.6.0"
+  },
+  "files": {
+    "dixon_coles.json": {
+      "sha256": "a88b08ed3d97eec47418eb33d6c0038ccf47944214697fead2324278be6fab4c",
+      "bytes": 17724
+    },
+    "gbm.txt": {
+      "sha256": "88ac60c8e047a02c0f69cf7085bf860927f90542eaaf2f5a930f1394905ef7c1",
+      "bytes": 3116006
+    },
+    "team_state.json": {
+      "sha256": "fb25bc9549686da5226594a97f444f624ab3753bb19c6a21eace42c99c287fde",
+      "bytes": 96977
+    },
+    "evaluation.json": {
+      "sha256": "d2cccd86d5b7b9805d88e88bcc6099278ad62c84469552ad3f2af66843b2d273",
+      "bytes": 7110
+    }
+  }
+}
