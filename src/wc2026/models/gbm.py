@@ -99,6 +99,12 @@ class GbmForecaster:
             proba = self._model.predict_proba(self._features(fixture).reshape(1, -1))[0]
         return OutcomeProbs(float(proba[0]), float(proba[1]), float(proba[2])).validated()
 
+    def booster_string(self) -> str:
+        """The fitted booster in LightGBM's plain-text model format (for artifacts)."""
+        if self._model is None:
+            raise RuntimeError("call fit() before exporting the booster")
+        return str(self._model.booster_.model_to_string())
+
     def feature_importances(self) -> dict[str, float]:
         """Gain-based feature importances from the last fit."""
         if self._model is None:

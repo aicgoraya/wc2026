@@ -206,6 +206,13 @@ class DixonColesForecaster:
         self._train_window_years = train_window_years
         self._params: DCParams | None = None
 
+    @classmethod
+    def from_params(cls, params: DCParams, *, max_goals: int = 10) -> "DixonColesForecaster":
+        """A ready-to-predict forecaster from previously fitted parameters (no refit)."""
+        model = cls(max_goals=max_goals)
+        model._params = params
+        return model
+
     @property
     def params(self) -> DCParams:
         """Fitted parameters (canonical form); raises before ``fit``."""

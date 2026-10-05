@@ -37,3 +37,36 @@ def test_snapshot_fixtures_without_token_exits_2() -> None:
 def test_unimplemented_command_exits_1() -> None:
     result = runner.invoke(app, ["simulate"])
     assert result.exit_code == 1
+
+
+def test_help_lists_serving_commands() -> None:
+    result = runner.invoke(app, ["--help"])
+    for command in ("export-artifact", "upload-artifact", "serve"):
+        assert command in result.output
+
+
+def test_export_synthetic_artifact_then_reject_a_tampered_upload(tmp_path: Path) -> None:
+    pytest.importorskip("lightgbm")
+    pytest.importorskip("boto3")
+    result = runner.invoke(
+        app,
+        [
+            "export-artifact",
+            "--synthetic",
+            "--version",
+            "t1",
+            "--out",
+            str(tmp_path),
+            "--no-evaluation",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "SYNTHETIC" in result.output
+    bundle = tmp_path / "t1"
+    assert (bundle / "manifest.json").exists()
+    assert not (bundle / "evaluation.json").exists()
+
+    (bundle / "gbm.txt").write_text("tampered")
+    upload = runner.invoke(app, ["upload-artifact", "--bundle", str(bundle), "--bucket", "nope"])
+    assert upload.exit_code == 2  # rejected locally, before any AWS call
+    assert "gbm.txt" in upload.output

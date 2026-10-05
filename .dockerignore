@@ -1,0 +1,8 @@
+# allow-list: the image is built from the lockfile and src/ only
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+src/**/__pycache__/
+**/*.pyc

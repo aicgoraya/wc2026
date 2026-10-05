@@ -13,6 +13,8 @@ internationals. Team-strength + form + schedule is the right level.
 
 import datetime as dt
 from collections import defaultdict, deque
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -36,6 +38,10 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "is_home",
 )
 
+FEATURE_SCHEMA_VERSION = "1"
+"""Bump whenever ``FEATURE_COLUMNS`` or any feature's definition changes. Saved
+model artifacts record it, and the serving loader refuses a mismatch."""
+
 _FORM_WINDOW = 5
 _MOMENTUM_WINDOW = 5
 _HOME_ADVANTAGE = 100.0
@@ -55,8 +61,13 @@ def competition_weight(tournament: str) -> float:
     return 0.50
 
 
-class _TeamState:
-    """Running, leak-free state for one team."""
+class TeamState:
+    """Running, leak-free state for one team.
+
+    Serializable (``to_dict``/``from_dict``) so the state as of a training
+    cutoff can be saved in a model artifact and used to build features for a
+    later fixture without replaying the match history at request time.
+    """
 
     __slots__ = ("last_played", "n_played", "rating", "rating_history", "results")
 
@@ -69,12 +80,15 @@ class _TeamState:
         self.n_played = 0
 
     def form_ppg(self) -> float:
+        """Points per game over the form window (1.0 with no history)."""
         return float(np.mean([r[0] for r in self.results])) if self.results else 1.0
 
     def avg_gf(self) -> float:
+        """Mean goals scored over the form window (1.2 with no history)."""
         return float(np.mean([r[1] for r in self.results])) if self.results else 1.2
 
     def avg_ga(self) -> float:
+        """Mean goals conceded over the form window (1.2 with no history)."""
         return float(np.mean([r[2] for r in self.results])) if self.results else 1.2
 
     def momentum(self) -> float:
@@ -84,9 +98,58 @@ class _TeamState:
         return self.rating_history[-1] - self.rating_history[0]
 
     def rest_days(self, date: dt.date) -> float:
+        """Days since the last match, capped; the cap when never played."""
         if self.last_played is None:
             return _REST_CAP_DAYS
         return min(float((date - self.last_played).days), _REST_CAP_DAYS)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe snapshot of the state."""
+        return {
+            "rating": self.rating,
+            "rating_history": list(self.rating_history),
+            "results": [list(r) for r in self.results],
+            "last_played": self.last_played.isoformat() if self.last_played else None,
+            "n_played": self.n_played,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "TeamState":
+        """Rebuild a state from ``to_dict`` output."""
+        state = cls()
+        state.rating = float(raw["rating"])
+        state.rating_history = deque(
+            (float(v) for v in raw["rating_history"]), maxlen=_MOMENTUM_WINDOW + 1
+        )
+        state.results = deque(
+            ((int(r[0]), int(r[1]), int(r[2])) for r in raw["results"]), maxlen=_FORM_WINDOW
+        )
+        last = raw["last_played"]
+        state.last_played = dt.date.fromisoformat(last) if last else None
+        state.n_played = int(raw["n_played"])
+        return state
+
+
+def fixture_features(
+    h: TeamState, a: TeamState, date: dt.date, *, neutral: bool, tournament: str
+) -> dict[str, float]:
+    """The ``FEATURE_COLUMNS`` values for one fixture from the two teams' prior state.
+
+    The single definition of every feature: both the training matrix and
+    online inference call this, so the two cannot drift apart.
+    """
+    advantage = 0.0 if neutral else _HOME_ADVANTAGE
+    return {
+        "elo_diff": (h.rating + advantage) - a.rating,
+        "elo_momentum_diff": h.momentum() - a.momentum(),
+        "form_diff": h.form_ppg() - a.form_ppg(),
+        "gf_diff": h.avg_gf() - a.avg_gf(),
+        "ga_diff": h.avg_ga() - a.avg_ga(),
+        "rest_diff": h.rest_days(date) - a.rest_days(date),
+        "log_experience_diff": float(np.log1p(h.n_played) - np.log1p(a.n_played)),
+        "comp_weight": competition_weight(tournament),
+        "is_home": 0.0 if neutral else 1.0,
+    }
 
 
 def build_feature_matrix(matches: pd.DataFrame) -> pd.DataFrame:
@@ -98,8 +161,23 @@ def build_feature_matrix(matches: pd.DataFrame) -> pd.DataFrame:
     ``FEATURE_COLUMNS``. ``label`` is the outcome code (0 home / 1 draw / 2
     away) for finished matches, else ``-1``.
     """
+    return _replay(matches)[0]
+
+
+def team_states_as_of(matches: pd.DataFrame, as_of: dt.date) -> dict[str, TeamState]:
+    """Every team's state after all finished matches strictly before ``as_of``.
+
+    This is exactly the state ``build_feature_matrix`` would read when building
+    a row for a match played on or after ``as_of`` with no later results known.
+    """
+    before = matches[matches["date"] < pd.Timestamp(as_of)]
+    return dict(_replay(before)[1])
+
+
+def _replay(matches: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, TeamState]]:
+    """The chronological pass: (feature matrix, final per-team state)."""
     ordered = matches.sort_values(["date", "match_id"])
-    state: dict[str, _TeamState] = defaultdict(_TeamState)
+    state: dict[str, TeamState] = defaultdict(TeamState)
     rows: list[dict[str, object]] = []
 
     cols = zip(
@@ -117,7 +195,6 @@ def build_feature_matrix(matches: pd.DataFrame) -> pd.DataFrame:
     for match_id, ts, home, away, neutral, tournament, status, hg, ag in cols:
         date = ts.date()
         h, a = state[home], state[away]
-        advantage = 0.0 if neutral else _HOME_ADVANTAGE
         label = -1
         if status == "finished":
             hg_i, ag_i = int(hg), int(ag)
@@ -129,27 +206,19 @@ def build_feature_matrix(matches: pd.DataFrame) -> pd.DataFrame:
                 "home_id": home,
                 "away_id": away,
                 "label": label,
-                "elo_diff": (h.rating + advantage) - a.rating,
-                "elo_momentum_diff": h.momentum() - a.momentum(),
-                "form_diff": h.form_ppg() - a.form_ppg(),
-                "gf_diff": h.avg_gf() - a.avg_gf(),
-                "ga_diff": h.avg_ga() - a.avg_ga(),
-                "rest_diff": h.rest_days(date) - a.rest_days(date),
-                "log_experience_diff": np.log1p(h.n_played) - np.log1p(a.n_played),
-                "comp_weight": competition_weight(tournament),
-                "is_home": 0.0 if neutral else 1.0,
+                **fixture_features(h, a, date, neutral=neutral, tournament=tournament),
             }
         )
         if status == "finished":
             _update(h, a, int(hg), int(ag), neutral, tournament, date)
 
     frame = pd.DataFrame(rows)
-    return frame.set_index("match_id")
+    return frame.set_index("match_id"), state
 
 
 def _update(
-    h: _TeamState,
-    a: _TeamState,
+    h: TeamState,
+    a: TeamState,
     hg: int,
     ag: int,
     neutral: bool,

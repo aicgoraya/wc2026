@@ -21,6 +21,8 @@ dependencies = [
 bayes = ["pymc>=5.15,<6", "arviz>=0.18,<1"]
 gbm = ["lightgbm>=4.3,<5", "scikit-learn>=1.4,<2"]
 dashboard = ["fastapi>=0.111,<1", "uvicorn>=0.29,<1", "plotly>=5.20,<7"]
+# the prediction service's runtime: what the container installs (no training stack)
+serve = ["fastapi>=0.111,<1", "uvicorn>=0.29,<1", "lightgbm>=4.3,<5", "boto3>=1.34,<2"]
 
 [project.scripts]
 wc2026 = "wc2026.cli:app"
@@ -35,6 +37,8 @@ dev = [
     "types-requests>=2.32",
     "httpx>=0.27",
 ]
+# AWS infrastructure (infra/). Not installed by default: `uv sync --group infra`.
+infra = ["aws-cdk-lib>=2.170,<3", "constructs>=10.3,<11"]
 
 [build-system]
 requires = ["hatchling"]
@@ -70,7 +74,16 @@ packages = ["wc2026"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "matplotlib.*", "pyarrow.*", "uvicorn.*", "fastapi.*", "lightgbm.*"]
+module = [
+    "scipy.*",
+    "matplotlib.*",
+    "pyarrow.*",
+    "uvicorn.*",
+    "fastapi.*",
+    "lightgbm.*",
+    "boto3.*",
+    "botocore.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -83,7 +96,7 @@ follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
 # FastAPI's route decorators are untyped; that's the framework, not our code
-module = ["wc2026.dashboard.app"]
+module = ["wc2026.dashboard.app", "wc2026.serving.app"]
 disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
