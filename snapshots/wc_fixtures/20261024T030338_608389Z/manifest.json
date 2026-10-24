@@ -1,0 +1,17 @@
+{
+  "dataset": "wc_fixtures",
+  "snapshot_id": "20261024T030338_608389Z",
+  "created_utc": "2026-10-24T03:03:38.608389+00:00",
+  "meta": {
+    "source": "football_data",
+    "raw_path": "data/raw/football_data/20261024T030338_599828Z.json",
+    "fetched_at_utc": "2026-10-24T03:03:38.599828+00:00",
+    "url": "https://api.football-data.org/v4/competitions/WC/matches",
+    "X-Requests-Available-Minute": "9",
+    "X-RequestCounter-Reset": "60",
+    "X-API-Version": "v4"
+  },
+  "frames": {
+    "matches": 104
+  }
+}
